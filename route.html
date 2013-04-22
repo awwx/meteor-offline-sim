@@ -1,0 +1,19 @@
+<head>
+  <title>offline data sim</title>
+</head>
+
+<body>
+  {{> route}}
+</body>
+
+<template name="route">
+  {{#if sim}}
+    {{> sim}}
+  {{/if}}
+
+  {{! else if }}
+
+  {{#if app}}
+    {{> app}}
+  {{/if}}
+</template>

@@ -1,0 +1,76 @@
+<template name="sim">
+  <div class="container">
+    <div class="row">
+      <div class="span12">
+        {{>connection}}
+        {{>tabs}}
+      </div>
+    </div>
+  </div>
+</template>
+
+<template name="connection">
+  <div style="margin: 1em">
+    <button id="addTab">Open browser tab</button>
+    &nbsp;
+    {{#if connected}}
+      <button id="goOffline">Go Offline</button>
+      &nbsp;
+      <span class="online-indicator">&#x25cf;</span>
+      currently ONLINE
+    {{else}}
+      <button id="goOnline">Go Online</button>
+      &nbsp;
+      <span class="offline-indicator">&#x25cb;</span>
+      currently offline
+    {{/if}}
+  </div>
+</template>
+
+<template name="tabs">
+  <div class="tabbable">
+    <ul class="nav nav-tabs">
+      <li class="active"><a href="#server" data-toggle="tab">Server</a></li>
+      <li><a href="#database" data-toggle="tab">Database</a></li>
+
+{{! TODO this doesn't work very well. A change to the tab document
+causes the template to rerender, which loses the "active" class added
+by Bootstrap. }}
+
+      {{#each tabs}}
+        <li><a href="#{{name}}" data-toggle="tab">{{name}}</a></li>
+      {{/each}}
+
+    </ul>
+    <div class="tab-content">
+      <div class="tab-pane active" id="server">
+        {{>server}}
+      </div>
+      <div class="tab-pane" id="database">
+        {{>database}}
+      </div>
+      {{#each tabs}}
+        <div class="tab-pane" id="{{name}}">
+          {{>tabPane}}
+        </div>
+      {{/each}}
+    </div>
+  </div>
+</template>
+
+<template name="tabPane">
+  <div style="margin-bottom: 10px">
+    <button class="closeTab">Close Tab</button>
+  </div>
+  <div class="browserTab">
+    <iframe id={{name}} name={{name}} src="/"></iframe>
+  </div>
+</template>
+
+<template name="server">
+  <pre>{{server}}</pre>
+</template>
+
+<template name="database">
+  <pre>{{database}}</pre>
+</template>

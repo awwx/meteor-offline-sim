@@ -1,0 +1,22 @@
+.browserTab {
+  padding: 0 5px 0 0;
+}
+
+iframe {
+  width: 100%;
+  height: 30em;
+}
+
+.online-indicator, .offline-indicator {
+  font-size: 32px;
+  position: relative;
+  top: 4px;
+}
+
+.online-indicator {
+  color: #0f0;
+}
+
+.offline-indicator {
+  color: #f00;
+}
