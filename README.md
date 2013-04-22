@@ -69,8 +69,8 @@ this seems to be working.
 
 With this algorithm it's normal for an app to make a method call (such
 as to update a document) while offline, and then later (perhaps after
-the application window has been closed and then later opened again) be
-able to connect to the server and to deliver the method call.
+the application window has been closed and then later opened again) to
+be able to connect to the server and to deliver the method call.
 
 This means that it no longer works to use function callbacks to report
 method completion (and thus collection modification completion): the
@@ -146,7 +146,7 @@ break.
 
 This implementation is just a first sketch at interfacing Meteor
 collections with the browser database; some more careful thought and
-review will be needed to figure out what race conditional we have or
+review will be needed to figure out what race conditions we have or
 don't have.
 
 
@@ -165,15 +165,11 @@ one tab was allowed to "poke" data into the memory space of another
 tab, to the other tab it would appear that its variables were being
 changed at random times.
 
-However when one window opens another with `window.open`:
-
-    childWindow = window.open("/child")
-
-and when a web page has iframes opened on the same domain, the two
+However when a web page has iframes opened on the same domain, the two
 windows *do* have access to each other's data and functions.  This is
-possible because there is actually only one runtime environment shared
-between the parent window and the child windows: one event loop, and
-one memory space.
+possible because there is actually only one runtime shared between the
+parent window and the child windows: one event loop, and one memory
+space.
 
 The simulator emulates browser tabs by opening each "tab" in an
 iframe.  This allows each tab to be running its own copy of Meteor,
