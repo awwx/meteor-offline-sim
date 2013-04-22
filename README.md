@@ -55,7 +55,7 @@ subscribed.  (Currently todo is unsubscribing: at the moment once a
 subscription is made it lasts forever).
 
 The core of the implementation is essentially a reimplementation of
-the code to run method stubs in livedatab_connection.js, with
+the code to run method stubs in livedata_connection.js, with
 relevant data structures such as "_documentsWrittenByStub" moved into
 the database.
 
@@ -83,6 +83,21 @@ need to filter collections on the client instead of or in addition to
 on the server.  (Applications may want to do less filtering on the
 server anyway so that a complete set of data is available for offline
 use).
+
+No attempt is made to avoid running method calls more than once on the
+server.  This can happen if a tab dies in between sending a method to
+the server and getting the "method completed" reply; and when an
+application comes online multiple tabs can attempt to deliver queued
+methods.  This is probably OK for idempotent method calls, though some
+thought would need to be given to delivering methods in order.
+
+For non-idempotent methods calls we could have the server keep a list
+of recently seen methods and to avoid running duplicates.  But the
+problem there is then we'd need to expire the list of seen method ids
+to avoid having the list grow ubound... and if someone enters an
+important note in their device and then loses it for a week and then
+finally goes online again, do we really want to throw away that update
+because it's past the expiration period?
 
 
 ## TODO ##
@@ -235,7 +250,7 @@ was wrapped in
     )(theWindowInstance);
 
 thus `window` in code always refers to the window the code was defined
-*in*, not where it is being called `from`.
+*in*, not where it is being called *from*.
 
 This isn't a big deal in practice, it just means that the only code
 that implicitly knows what window it is being run from is code defined
