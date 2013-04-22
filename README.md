@@ -7,6 +7,16 @@ Using a simulator makes it easier to figure out whether the algorithm
 is a good idea, without having to first implement all the details of
 an actual browser database or cross tab communication.
 
+To run the simulator with the "todos" example:
+
+    $ git clone git://github.com/awwx/meteor-offline-sim.git
+    $ cd meteor-offline-sim
+    $ meteor
+
+(Note you won't get a todo list automatically selected for you because
+the "subscription complete" callback isn't implemented yet; just click
+on one of the todo lists yourself).
+
 
 ## Simulator ##
 
@@ -189,7 +199,7 @@ but there are some surprises.  If another iframe checks to see if
     window.parent.foo instanceof Array
 
 the answer is actually `false`!  Each window has its own
-[separate `Array` constructor](https://developer.mozilla.org/en-US/docs/JavaScript/Reference/Operators/instanceof#instanceof_and_multiple_context_%28e.g._frames_or_windows%29),
+[separate Array constructor](https://developer.mozilla.org/en-US/docs/JavaScript/Reference/Operators/instanceof#instanceof_and_multiple_context_%28e.g._frames_or_windows%29),
 and `instanceof` checks to see if the object's prototype is `===` to
 the constructor.
 
@@ -219,7 +229,7 @@ and we call that function from another window.  Which window does
 `window` in the code refer to?  If `window` was dynamically scoped,
 connected to the "runtime environment" somehow, then we could imagine
 that `window` in `foo` might refer to the window that we're calling
-form.
+from.
 
 Nope.  `window` is statically scoped, as if code defined in a window
 was wrapped in
