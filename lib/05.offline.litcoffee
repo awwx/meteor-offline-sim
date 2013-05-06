@@ -76,8 +76,8 @@ tab.
       )
       return
 
-Right now all tabs subscribe to all subscriptions.  But maybe tabs
-could unsubscribe if another tab becomes the active tab.
+Right now all tabs subscribe to all subscriptions.  But tabs
+could unsubscribe if another tab becomes the proxy tab.
 
     broadcast.listen 'subscriptionAdded', ->
       subscribeToSubscriptions()

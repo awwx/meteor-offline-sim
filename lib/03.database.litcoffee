@@ -83,7 +83,7 @@ tab not being an instanceof Object or Array in another tab.
         stubDocuments: '{}'
         queuedMethods: '{}'
         subscriptions: '[]'
-        activeTab:     'null'
+        proxyTab:      'null'
         tabHeartbeats: '{}'
       }
 
@@ -95,7 +95,7 @@ constantly.
         data = Sim.databaseData
         return (
           """
-          activeTab: #{data.activeTab}
+          proxyTab: #{data.proxyTab}
 
           subscriptions: #{data.subscriptions}
 
@@ -267,24 +267,24 @@ include the heartbeats in the database dump.
         return Result.completed(getHeartbeats())
 
 
-The "active tab".
+The proxy tab.
 
-      getActiveTab = ->
-        JSON.parse(Sim.databaseData.activeTab)
+      getProxyTab = ->
+        JSON.parse(Sim.databaseData.proxyTab)
 
-      setActiveTab = (tabId) ->
-        Sim.databaseData.activeTab = stringify(tabId)
+      setProxyTab = (tabId) ->
+        Sim.databaseData.proxyTab = stringify(tabId)
         Sim.databaseChanged()
         return
 
-      database.writeActiveTab = (tabId) ->
+      database.writeProxyTab = (tabId) ->
         database.mustBeInTransaction()
-        setActiveTab tabId
+        setProxyTab tabId
         return Result.completed()
 
-      database.readActiveTab = ->
+      database.readProxyTab = ->
         database.mustBeInTransaction()
-        return Result.completed(getActiveTab())
+        return Result.completed(getProxyTab())
 
 
 The list of subscriptions that we've subscribed to.
