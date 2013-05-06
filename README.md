@@ -1,11 +1,11 @@
 # Offline Algorithm Simulation #
 
-This is a simulation of one approach for storing data offline
-in Meteor.
+This is a simulation of the algorithm for
+[storing data offline in Meteor](https://github.com/awwx/meteor-offline-data#readme).
 
-Using a simulator makes it easier to figure out whether the algorithm
-is a good idea, without having to first implement all the details of
-an actual browser database or cross tab communication.
+Using a simulator makes it easier to figure out the the details
+of the algorithm, without having to first implement the
+actual browser database or cross tab communication.
 
 To run the simulator with the "todos" example:
 
