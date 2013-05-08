@@ -27,15 +27,18 @@ topic.
       Sim.broadcast.fanout = (messageName) ->
         Sim.broadcast.fanouts[messageName] or= new Fanout()
 
+      Sim.broadcast.broadcast = (messageTopic, args) ->
+        args = EJSON.stringify(args)
+        Sim.broadcast.fanout(messageTopic)(args)
+        return
+
 
 ## Client App ##
 
     if isApp
 
       @broadcast = (messageTopic, args...) ->
-        args = EJSON.stringify(args)
-        Meteor.defer ->
-          Sim.broadcast.fanout(messageTopic)(args)
+        Meteor.defer -> Sim.broadcast.broadcast messageTopic, args
         return
 
       @broadcast.listen = (messageTopic, callback) ->

@@ -24,6 +24,13 @@ Since the check runs in a database transaction, the checks happen one
 at a time.  If multiple tabs are eligible to become the proxy tab,
 then whichever tab checks first will win.
 
+## Client Sim ##
+
+    if Meteor.isClient and isSim
+
+      Sim.deactivateTab = (tabId) ->
+        Sim.broadcast.broadcast 'deactivateTab', [tabId]
+
 
 ## Client App ##
 
@@ -37,13 +44,26 @@ The real system would use `Random.id()`.
     @thisTabId = thisApp.id
 
 
+Who is really the proxy tab is kept transactionally in the database;
+this keeps track of whether we notified ourselves of a change in proxy
+status.
+
+    currentlyTheProxyTab = false
+
 Called when this tab becomes the proxy tab.
+
+TODO maybe this could be a reactive status?  But not sure whether it
+is a good idea to get Deps involved in the middle of this or not.
 
     @nowProxy = new Fanout()
 
-    # nowProxy.listen ->
-    #   console.log thisApp.id, 'is now the proxy tab'
+    @noLongerProxy = new Fanout()
 
+    nowProxy.listen ->
+      console.log thisApp.id, 'is now the proxy tab'
+
+    noLongerProxy.listen ->
+      console.log thisApp.id, 'is no longer the proxy tab'
 
     now = -> new Date().getTime()
 
@@ -54,7 +74,8 @@ Called when this tab becomes the proxy tab.
       return
 
     heartbeat()
-    setInterval(heartbeat, 300)
+    heartbeatIntervalId = Meteor.setInterval(heartbeat, 300)
+
 
     isTabInactive = (tabId, heartbeats) ->
       heartbeat = heartbeats[tabId]
@@ -63,6 +84,22 @@ Called when this tab becomes the proxy tab.
 
 TODO clean up heartbeats of dead tabs in the database.
 
+    becameTheProxyTab = ->
+      Meteor.defer ->
+        currentlyTheProxyTab = true
+        nowProxy.call()
+        broadcast 'newProxyTab'
+        return
+      return
+
+    notTheProxyTab = ->
+      Meteor.defer ->
+        return unless currentlyTheProxyTab
+        currentlyTheProxyTab = false
+        noLongerProxy.call()
+        return
+      return
+
     check = ->
       database.transaction thisApp, 'check proxy tab', ->
         Result.join([
@@ -70,19 +107,40 @@ TODO clean up heartbeats of dead tabs in the database.
           database.readTabHeartbeats()
         ])
         .then(([proxyTabId, heartbeats]) ->
-          if proxyTabId? and not isTabInactive(proxyTabId, heartbeats)
+          if proxyTabId is thisTabId or (proxyTabId? and not isTabInactive(proxyTabId, heartbeats))
             return
           database.writeProxyTab(thisTabId)
-          .then(->
-            Meteor.defer -> nowProxy.call()
-            return
-          )
+          .then(becameTheProxyTab)
         )
       return
+
+    broadcast.listen 'newProxyTab', ->
+      database.transaction thisApp, 'new proxy tab', ->
+        database.readProxyTab()
+        .then((proxyTabId) ->
+          if proxyTabId isnt thisTabId
+            notTheProxyTab()
+          return
+        )
+      return
+
 
 Do a check immediately, so that if we're the first tab we become the
 proxy tab right away.  But run the check in the next tick of the
 event loop to give the offline code a chance to register its listener.
 
     Meteor.defer check
-    Meteor.setInterval(check, 1000)
+    checkIntervalId = Meteor.setInterval(check, 1000)
+
+
+For testing, allow a tab to become "inactive".
+
+    broadcast.listen 'deactivateTab', (tabId) ->
+      if tabId is thisTabId
+        if heartbeatIntervalId?
+          Meteor.clearInterval(heartbeatIntervalId)
+          heartbeatIntervalId = null
+        if checkIntervalId?
+          Meteor.clearInterval(checkIntervalId)
+          checkIntervalId = null
+      return
