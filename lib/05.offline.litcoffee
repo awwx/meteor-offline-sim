@@ -95,11 +95,15 @@ TODO oof rename please
       )
       return
 
-    subscribeToSubscriptions = ->
+    maybeSubscribeToSubscriptions = ->
       database.transaction(thisApp, 'subscribe to subscriptions', ->
-        database.readSubscriptions()
+        Result.join([
+          database.readSubscriptions()
+          database.readProxyTab()
+        ])
       )
-      .then((subscriptions) ->
+      .then(([subscriptions, proxyTabId]) ->
+        return unless proxyTabId is thisTabId
         for subscription in _.reject(subscriptions, alreadyHaveSubscription)
           updatedOurData = false
           subscribedTo.push subscription
@@ -110,11 +114,14 @@ TODO oof rename please
       )
       return
 
-Right now all tabs subscribe to all subscriptions.  But tabs
-could unsubscribe if another tab becomes the proxy tab.
+A tab only subscribes to the shared subscriptions when it is the proxy
+tab.  TODO unsubscribe if the tab is no longer the proxy tab.
 
     broadcast.listen 'subscriptionAdded', ->
-      subscribeToSubscriptions()
+      maybeSubscribeToSubscriptions()
+
+    nowProxy.listen ->
+      maybeSubscribeToSubscriptions()
 
     copyServerToLocal = (collectionName, docId) ->
       return offlineCollections[collectionName].copyServerToLocal(docId)
