@@ -28,8 +28,16 @@ then whichever tab checks first will win.
 
     if Meteor.isClient and isSim
 
+
+Allow tabs to be deactivated in simulation.
+
+      Sim.deactivatedTabs = {}
+
       Sim.deactivateTab = (tabId) ->
-        Sim.broadcast.broadcast 'deactivateTab', [tabId]
+        Sim.deactivatedTabs[tabId] = true
+
+      Sim.activateTab = (tabId) ->
+        delete Sim.deactivatedTabs[tabId]
 
 
 ## Client App ##
@@ -68,13 +76,14 @@ is a good idea to get Deps involved in the middle of this or not.
     now = -> new Date().getTime()
 
     heartbeat = ->
+      return if Sim.deactivatedTabs[thisTabId]
       database.transaction(thisApp, 'update heartbeat', ->
         database.writeTabHeartbeat thisTabId, now()
       )
       return
 
     heartbeat()
-    heartbeatIntervalId = Meteor.setInterval(heartbeat, 300)
+    Meteor.setInterval(heartbeat, 300)
 
 
     isTabInactive = (tabId, heartbeats) ->
@@ -101,6 +110,7 @@ TODO clean up heartbeats of dead tabs in the database.
       return
 
     check = ->
+      return if Sim.deactivatedTabs[thisTabId]
       database.transaction thisApp, 'check proxy tab', ->
         Result.join([
           database.readProxyTab(),
@@ -130,17 +140,4 @@ proxy tab right away.  But run the check in the next tick of the
 event loop to give the offline code a chance to register its listener.
 
     Meteor.defer check
-    checkIntervalId = Meteor.setInterval(check, 1000)
-
-
-For testing, allow a tab to become "inactive".
-
-    broadcast.listen 'deactivateTab', (tabId) ->
-      if tabId is thisTabId
-        if heartbeatIntervalId?
-          Meteor.clearInterval(heartbeatIntervalId)
-          heartbeatIntervalId = null
-        if checkIntervalId?
-          Meteor.clearInterval(checkIntervalId)
-          checkIntervalId = null
-      return
+    Meteor.setInterval(check, 1000)

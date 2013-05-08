@@ -58,6 +58,7 @@ The list of subscriptions that we've already subscribed to in this
 tab.
 
     subscribedTo = []
+    subscriptionHandle = {}
     nSubscriptionsReady = 0
 
     hasSubscription = (list, subscription) ->
@@ -95,6 +96,9 @@ TODO oof rename please
       )
       return
 
+
+TODO we should listen on the error callback and do something.
+
     maybeSubscribeToSubscriptions = ->
       database.transaction(thisApp, 'subscribe to subscriptions', ->
         Result.join([
@@ -105,12 +109,17 @@ TODO oof rename please
       .then(([subscriptions, proxyTabId]) ->
         return unless proxyTabId is thisTabId
         for subscription in _.reject(subscriptions, alreadyHaveSubscription)
-          updatedOurData = false
-          subscribedTo.push subscription
-          {name, args} = subscription
-          do (subscription) -> Meteor.subscribe name, args..., ->
-            ++nSubscriptionsReady
-            checkIfReadyToUpdate()
+          do (subscription) ->
+            updatedOurData = false
+            subscribedTo.push subscription
+            {name, args} = subscription
+            handle = Meteor.subscribe name, args..., ->
+              ++nSubscriptionsReady
+              checkIfReadyToUpdate()
+              return
+            subscriptionHandle[EJSON.stringify(subscription)] = handle
+            return
+        return
       )
       return
 
@@ -122,6 +131,20 @@ tab.  TODO unsubscribe if the tab is no longer the proxy tab.
 
     nowProxy.listen ->
       maybeSubscribeToSubscriptions()
+
+
+When some other tab becomes the proxy tab we won't be paying attention
+to updates from the server, so we don't need to stay subscribed
+ourselves.
+
+    noLongerProxy.listen ->
+      for subscription in subscribedTo
+        subscriptionHandle[EJSON.stringify(subscription)]?.stop()
+      subscriptionHandle = {}
+      subscribedTo = []
+      nSubscriptionsReady = 0
+      return
+
 
     copyServerToLocal = (collectionName, docId) ->
       return offlineCollections[collectionName].copyServerToLocal(docId)
