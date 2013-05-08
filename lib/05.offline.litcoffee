@@ -53,12 +53,12 @@ cancel the subscription.
         broadcast 'subscriptionAdded'
       )
 
+
 The list of subscriptions that we've already subscribed to in this
 tab.
 
     subscribedTo = []
-
-    stringify = JSON.stringify
+    nSubscriptionsReady = 0
 
     hasSubscription = (list, subscription) ->
       _.some(list, (sub) -> EJSON.equals(subscription, sub))
@@ -66,13 +66,47 @@ tab.
     alreadyHaveSubscription = (subscription) ->
       hasSubscription(subscribedTo, subscription)
 
+    allSubscriptionsReady = ->
+      nSubscriptionsReady is subscribedTo.length
+
+We are the proxy tab and all our subscriptions are ready.  We can now
+delete documents in the offline collection which are no longer present
+on the server.
+
+TODO oof rename please
+
+    updatedOurData = false
+
+    updateOurData = ->
+      database.mustBeInTransaction()
+      if updatedOurData
+        return Result.completed()
+      else
+        updatedOurData = true
+        return forEachCollectionResult('deleteDocumentsGoneFromServer')
+
+    checkIfReadyToUpdate = ->
+      database.transaction(thisApp, 'all subscriptions ready', ->
+        database.readProxyTab()
+        .then((proxyTabId) =>
+          if proxyTabId is thisTabId and allSubscriptionsReady()
+            updateOurData()
+        )
+      )
+      return
+
     subscribeToSubscriptions = ->
       database.transaction(thisApp, 'subscribe to subscriptions', ->
         database.readSubscriptions()
       )
       .then((subscriptions) ->
-        for {name, args} in _.reject(subscriptions, alreadyHaveSubscription)
-          Meteor.subscribe name, args...
+        for subscription in _.reject(subscriptions, alreadyHaveSubscription)
+          updatedOurData = false
+          subscribedTo.push subscription
+          {name, args} = subscription
+          do (subscription) -> Meteor.subscribe name, args..., ->
+            ++nSubscriptionsReady
+            checkIfReadyToUpdate()
       )
       return
 
@@ -339,44 +373,42 @@ TODO Figure out how to munge the `autopublish` package.
         )
         .then(=> @watchServer())
 
-      serverDocChanged: (doc) ->
+A document has changed in the server collection (the local client
+mirror of our subscriptions to the server).
+
+Ignore updates from the server if this tab isn't the proxy tab (our
+livedata connection isn't necessarily exactly in sync with the proxy
+tab's connection).
+
+We also defer updating if the document has been written by a stub of a
+method still in flight.
+
+      serverDocUpdated: (docId, doc) ->
         database.transaction(thisApp, 'server doc changed', =>
-          database.wasDocumentWrittenByStub(@name, doc._id)
-          .then((wasWritten) =>
-            if wasWritten
+          Result.join([
+            database.wasDocumentWrittenByStub(@name, docId)
+            database.readProxyTab()
+          ])
+          .then(([wasWritten, proxyTabId]) =>
+            if proxyTabId isnt thisTabId or wasWritten
               return
             else
-              return database.writeDoc @name, doc
+              if doc?
+                return database.writeDoc @name, doc
+              else
+                return database.deleteDoc @name, docId
           )
         )
         .then(=>
-          broadcast 'documentUpdated', @name, doc._id
-        )
-        return
-
-      serverDocRemoved: (doc) ->
-        database.transaction(thisApp, 'server doc removed', =>
-          database.wasDocumentWrittenByStub(@name, doc._id)
-          .then((wasWritten) =>
-            if wasWritten
-              return
-            else
-              return database.deleteDoc @name, doc._id
-          )
-        )
-
-TODO only broadcast if the document actually was deleted.
-
-        .then(=>
-          broadcast 'documentUpdated', @name, doc._id
+          broadcast 'documentUpdated', @name, docId
         )
         return
 
       watchServer: ->
         @serverCollection.find().observe
-          added:   (doc) => @serverDocChanged doc
-          changed: (doc) => @serverDocChanged doc
-          removed: (doc) => @serverDocRemoved doc
+          added:   (doc) => @serverDocUpdated doc._id, doc
+          changed: (doc) => @serverDocUpdated doc._id, doc
+          removed: (doc) => @serverDocUpdated doc._id, null
         return
 
       updateLocal: (docId, doc) ->
@@ -418,6 +450,42 @@ TODO only broadcast if the document actually was deleted.
           for id in idsToDelete
             @localCollection.remove id
           return
+        )
+
+We have a full and complete set of data from the server (our
+subscriptions are ready).  We can now delete documents in the offline
+collection which are no longer present on the server.
+
+      deleteDocUnlessWrittenByStub: (docId) ->
+        database.mustBeInTransaction()
+        database.wasDocumentWrittenByStub(@name, docId)
+        .then((wasWritten) =>
+          if wasWritten
+            return
+          else
+            return database.deleteDoc @name, docId
+        )
+
+      deleteDocumentsGoneFromServer: ->
+        database.mustBeInTransaction()
+        @loadFromDatabase()
+        .then(=>
+          idsToDelete = []
+          @localCollection.find({}).forEach (doc) =>
+            unless @serverCollection.findOne(doc._id)
+              idsToDelete.push doc._id
+          # TODO Result.map ?
+          writes = []
+          for docId in idsToDelete
+            writes.push @deleteDocUnlessWrittenByStub(docId)
+          Result.join(writes)
+          .then(=>
+            Meteor.defer =>
+              # TODO documentsUpdated message
+              for docId in idsToDelete
+                broadcast 'documentUpdated', @name, docId
+            return
+          )
         )
 
       writeMethodChanges: (methodId) ->

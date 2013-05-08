@@ -1,6 +1,10 @@
 if (! (Meteor.isClient && isApp))
   return;
 
+Template.app.connectionStatus = function () {
+  return Meteor.status().connected ? 'connected' : 'not connected';
+};
+
 // Client-side JavaScript, bundled and sent to client.
 
 // Define Minimongo collections to match server/publish.js.

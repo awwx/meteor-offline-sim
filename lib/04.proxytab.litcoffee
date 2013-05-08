@@ -16,10 +16,9 @@ Currently we don't yet detect tabs that are gone, but we could by
 cross-tab messaging and finding out which tabs we're not getting a
 reply from.
 
-Each tab also periodically checks if it should become the proxy tab.
-It chooses to become the proxy tab if there isn't already another tab
-which is already the proxy tab, or if the current proxy tab has
-become inactive.
+Each tab periodically checks if it should become the proxy tab.  It
+chooses to become the proxy tab if there isn't already a proxy tab, or
+if the current proxy tab has become inactive.
 
 Since the check runs in a database transaction, the checks happen one
 at a time.  If multiple tabs are eligible to become the proxy tab,
