@@ -85,6 +85,7 @@ tab not being an instanceof Object or Array in another tab.
         subscriptions: '[]'
         proxyTab:      'null'
         tabHeartbeats: '{}'
+        tabAlives:      '{}'
       }
 
 Don't include the tab heartbeats in the dump because they change
@@ -254,7 +255,6 @@ include the heartbeats in the database dump.
         Sim.databaseData.tabHeartbeats = stringify(heartbeats)
         return
 
-
       database.writeTabHeartbeat = (tabId, timestamp) ->
         database.mustBeInTransaction()
         heartbeats = getHeartbeats()
@@ -265,6 +265,43 @@ include the heartbeats in the database dump.
       database.readTabHeartbeats = ->
         database.mustBeInTransaction()
         return Result.completed(getHeartbeats())
+
+      database.removeTabHeartbeats = (tabIds) ->
+        database.mustBeInTransaction()
+        heartbeats = getHeartbeats()
+        for tabId in tabIds
+          delete heartbeats[tabId]
+        setHeartbeats heartbeats
+        return Result.completed()
+
+
+Tabs that respond to a ping broadcast.
+
+      getTabAlives = ->
+        JSON.parse(Sim.databaseData.tabAlives)
+
+      setTabAlives = (alives) ->
+        Sim.databaseData.tabAlives = stringify(alives)
+        return
+
+      database.readTabAlives = ->
+        database.mustBeInTransaction()
+        return Result.completed(getTabAlives())
+
+      database.writeTabAlive = (tabId, timestamp) ->
+        database.mustBeInTransaction()
+        alives = getTabAlives()
+        alives[tabId] = timestamp
+        setTabAlives alives
+        return Result.completed()
+
+      database.removeTabAlives = (tabIds) ->
+        database.mustBeInTransaction()
+        alives = getTabAlives()
+        for tabId in tabIds
+          delete alives[tabId]
+        setTabAlives alives
+        return Result.completed()
 
 
 The proxy tab.

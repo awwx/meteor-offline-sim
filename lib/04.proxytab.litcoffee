@@ -12,10 +12,6 @@ A tab will become "inactive" if it has been closed.  In addition, iOS
 Safari setTimeout events aren't delivered to inactive tabs, and so
 they will also become labeled "inactive" using this algorithm.
 
-Currently we don't yet detect tabs that are gone, but we could by
-cross-tab messaging and finding out which tabs we're not getting a
-reply from.
-
 Each tab periodically checks if it should become the proxy tab.  It
 chooses to become the proxy tab if there isn't already a proxy tab, or
 if the current proxy tab has become inactive.
@@ -73,6 +69,15 @@ is a good idea to get Deps involved in the middle of this or not.
     noLongerProxy.listen ->
       console.log thisApp.id, 'is no longer the proxy tab'
 
+
+Notification to the proxy tab of tabs that have died.
+
+    @tabsAreDead = new Fanout()
+
+    tabsAreDead.listen (tabIds) ->
+      console.log 'tabs are dead', tabIds
+
+
     now = -> new Date().getTime()
 
     heartbeat = ->
@@ -94,20 +99,72 @@ is a good idea to get Deps involved in the middle of this or not.
 TODO clean up heartbeats of dead tabs in the database.
 
     becameTheProxyTab = ->
-      Meteor.defer ->
-        currentlyTheProxyTab = true
-        nowProxy.call()
-        broadcast 'newProxyTab'
-        return
+      currentlyTheProxyTab = true
+      nowProxy()
+      broadcast 'newProxyTab'
       return
 
     notTheProxyTab = ->
       Meteor.defer ->
         return unless currentlyTheProxyTab
         currentlyTheProxyTab = false
-        noLongerProxy.call()
+        noLongerProxy()
         return
       return
+
+In iOS Safari delivery of setTimeout or setInterval events for an
+inactive tab is delayed until the tab becomes active again, but as
+long as the tab hasn't actually been unloaded it will still receive
+other events such as the storage event we use for cross-tab
+communication.
+
+    lastPing = null
+    tabsAliveAtLastPing = {}
+
+    pingOtherTabs = (alives) ->
+      lastPing = now()
+      tabsAliveAtLastPing = alives
+      Meteor.defer -> broadcast 'ping'
+      return
+
+    broadcast.listen 'ping', ->
+      database.transaction thisApp, 'record tab alive', ->
+        database.writeTabAlive(thisTabId, now())
+
+    someTabsAreDead = (tabIds) ->
+      database.mustBeInTransaction()
+      Result.join([
+        database.removeTabHeartbeats(tabIds)
+        database.removeTabAlives(tabIds)
+      ]).then(->
+        Meteor.defer -> tabsAreDead(tabIds)
+        return
+      )
+
+
+New tabs may have opened since the last ping, and we don't want to
+mark them as dead just because they haven't gotten a ping yet.
+
+    asTheProxyTab = ->
+      database.mustBeInTransaction()
+      database.readTabAlives()
+      .then((alives) ->
+        if lastPing? and now() - lastPing > 300
+          deadTabs = []
+          for tabId, timestamp of alives
+            if tabId of tabsAliveAtLastPing and alives[tabId] < lastPing
+              deadTabs.push tabId
+
+          if deadTabs.length > 0
+            return someTabsAreDead(deadTabs).then(-> alives)
+          else
+            return alives
+        else
+          return alives
+      ).then((alives) ->
+        throw new Error('die') unless alives?
+        return pingOtherTabs(alives)
+      )
 
     check = ->
       return if Sim.deactivatedTabs[thisTabId]
@@ -117,10 +174,18 @@ TODO clean up heartbeats of dead tabs in the database.
           database.readTabHeartbeats()
         ])
         .then(([proxyTabId, heartbeats]) ->
-          if proxyTabId is thisTabId or (proxyTabId? and not isTabInactive(proxyTabId, heartbeats))
+          if proxyTabId is thisTabId
+             return asTheProxyTab()
+          if proxyTabId? and not isTabInactive(proxyTabId, heartbeats)
             return
           database.writeProxyTab(thisTabId)
-          .then(becameTheProxyTab)
+          .then(->
+            Meteor.defer ->
+              becameTheProxyTab()
+              asTheProxyTab()
+              return
+            return
+          )
         )
       return
 

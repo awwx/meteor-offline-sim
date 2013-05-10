@@ -139,10 +139,13 @@ class added by Bootstrap.
 TODO dispose broadcast listeners
 TODO abort transaction?
 
+      Sim.closedTabs = {}
+
       closeTab = (tabName) ->
         # Remember our tab position.
         index = tabIndex(tabName)
 
+        Sim.closedTabs[tabName] = true
         childWindowOfName(tabName)?.thisApp.closed = true
         Tabs.remove Tabs.findOne({name: tabName})._id
         Meteor.flush()

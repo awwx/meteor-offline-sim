@@ -43,6 +43,7 @@ topic.
 
       @broadcast.listen = (messageTopic, callback) ->
         Sim.broadcast.fanout(messageTopic).listen (args) ->
+          return if Sim.closedTabs[thisTabId]
           args = EJSON.parse(args)
           callback(args...)
           return
