@@ -8,6 +8,9 @@ Each tab periodically records a "heartbeat" timestamp in the database.
 Tabs that haven't recently updated their heartbeat are considered to
 be "inactive".
 
+TODO rename to avoid confusion with which tab is the selected tab in
+the browser UI?
+
 A tab will become "inactive" if it has been closed.  In addition, iOS
 Safari setTimeout events aren't delivered to inactive tabs, and so
 they will also become labeled "inactive" using this algorithm.
@@ -16,9 +19,23 @@ Each tab periodically checks if it should become the proxy tab.  It
 chooses to become the proxy tab if there isn't already a proxy tab, or
 if the current proxy tab has become inactive.
 
+In most browsers it doesn't matter which tab is active (selected in
+the tab list and visible to the user); a tab will function just as
+well as the proxy tab whether it is selected or not.  In iOS Safari
+the tab selected and visible in the UI will become the proxy tab, as
+setInterval events are not delivered to the other tabs and they become
+labeled "inactive".
+
 Since the check runs in a database transaction, the checks happen one
 at a time.  If multiple tabs are eligible to become the proxy tab,
 then whichever tab checks first will win.
+
+The proxy tab sends out a "ping" broadcast, to which all the tabs
+respond by recoding their "alive" timestamp in the database.  In iOS
+Safari inactive tabs still receive storage events, so they can be
+detected by this mechanism.  The proxy tab marks tabs as "dead" if
+they don't respond to the ping.
+
 
 ## Client Sim ##
 
