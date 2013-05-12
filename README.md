@@ -11,6 +11,7 @@ To run the simulator with the "todos" example:
 
     $ git clone git://github.com/awwx/meteor-offline-sim.git
     $ cd meteor-offline-sim
+    $ git submodule update --init --recursive
     $ meteor
 
 (Note you won't get a todo list automatically selected for you because
