@@ -41,34 +41,23 @@ cancel the subscription.
           'reactive offline subscriptions are not yet implemented'
         )
 
-      subscription = {name, args}
-
       database.transaction(thisApp, 'add subscription', ->
-        database.readSubscriptions()
-        .then((subscriptions) ->
-          unless hasSubscription(subscriptions, subscription)
-            database.addSubscription(subscription)
-        )
+        database.addSubscription({tabId: thisTabId, name, args})
       ).then(->
         broadcast 'subscriptionAdded'
       )
 
 
-The list of subscriptions that we've already subscribed to in this
-tab.
+The list of subscriptions that we're subscribed to in this tab.
 
-    subscribedTo = []
-    subscriptionHandle = {}
+    subscriptionHandles = {}
     nSubscriptionsReady = 0
 
-    hasSubscription = (list, subscription) ->
-      _.some(list, (sub) -> EJSON.equals(subscription, sub))
-
     alreadyHaveSubscription = (subscription) ->
-      hasSubscription(subscribedTo, subscription)
+      !! subscriptionHandles[canonicalStringify(subscription)]
 
     allSubscriptionsReady = ->
-      nSubscriptionsReady is subscribedTo.length
+      nSubscriptionsReady is _.size(subscriptionHandles)
 
 We are the proxy tab and all our subscriptions are ready.  We can now
 delete documents in the offline collection which are no longer present
@@ -96,41 +85,60 @@ TODO oof rename please
       )
       return
 
+    mergeSubscriptions = (tabSubscriptions) ->
+      merged = []
+      for {tabId, name, args} in tabSubscriptions
+        subscription = {name, args}
+        unless _.find(merged, (s) -> EJSON.equals(s, subscription))
+          merged.push subscription
+      return merged
 
 TODO we should listen on the error callback and do something.
 
-    maybeSubscribeToSubscriptions = ->
+    updateSubscriptions = ->
       database.transaction(thisApp, 'subscribe to subscriptions', ->
         Result.join([
           database.readSubscriptions()
           database.readProxyTab()
         ])
       )
-      .then(([subscriptions, proxyTabId]) ->
+      .then(([tabSubscriptions, proxyTabId]) ->
         return unless proxyTabId is thisTabId
+        subscriptions = mergeSubscriptions(tabSubscriptions)
+
+        for serializedSubscription, handle of subscriptionHandles
+          subscription = JSON.parse(serializedSubscription)
+          unless _.find(subscriptions, (s) -> EJSON.equals(s, subscription))
+            handle.stop()
+            delete subscriptionHandles[serializedSubscription]
+
         for subscription in _.reject(subscriptions, alreadyHaveSubscription)
           do (subscription) ->
             updatedOurData = false
-            subscribedTo.push subscription
             {name, args} = subscription
             handle = Meteor.subscribe name, args..., ->
               ++nSubscriptionsReady
               checkIfReadyToUpdate()
               return
-            subscriptionHandle[EJSON.stringify(subscription)] = handle
+            subscriptionHandles[canonicalStringify(subscription)] = handle
             return
+
         return
       )
       return
 
+
 A tab only subscribes to the shared subscriptions when it is the proxy
-tab.  TODO unsubscribe if the tab is no longer the proxy tab.
+tab.
 
     broadcast.listen 'subscriptionAdded', ->
-      maybeSubscribeToSubscriptions()
+      updateSubscriptions()
 
     nowProxy.listen ->
-      maybeSubscribeToSubscriptions()
+      updateSubscriptions()
+
+    tabsAreDead.listen ->
+      updateSubscriptions()
 
 
 When some other tab becomes the proxy tab we won't be paying attention
@@ -138,10 +146,9 @@ to updates from the server, so we don't need to stay subscribed
 ourselves.
 
     noLongerProxy.listen ->
-      for subscription in subscribedTo
-        subscriptionHandle[EJSON.stringify(subscription)]?.stop()
-      subscriptionHandle = {}
-      subscribedTo = []
+      for subscription, handle of subscriptionHandles
+        handle.stop()
+      subscriptionHandles = {}
       nSubscriptionsReady = 0
       return
 
@@ -362,11 +369,6 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
     Meteor.startup ->
       offlineConnection.sendQueuedMethods()
 
-
-TODO Need to do explicit subscriptions, and to only subscribe from one
-tab at a time.
-
-TODO Figure out how to munge the `autopublish` package.
 
     class OfflineCollection
 

@@ -324,7 +324,9 @@ The proxy tab.
         return Result.completed(getProxyTab())
 
 
-The list of subscriptions that we've subscribed to.
+The list of subscriptions that a tab is subscribed to.  A subscription
+is uniquely identified by the tabId, subscription name, and
+subscription arguments.
 
       getSubscriptions = ->
         JSON.parse(Sim.databaseData.subscriptions)
@@ -337,10 +339,21 @@ The list of subscriptions that we've subscribed to.
       database.addSubscription = (subscription) ->
         database.mustBeInTransaction()
         subscriptions = getSubscriptions()
-        subscriptions.push subscription
+        unless _.find(subscriptions, (s) -> EJSON.equals(s, subscription))
+          subscriptions.push subscription
         setSubscriptions subscriptions
         return Result.completed()
 
       database.readSubscriptions = ->
         database.mustBeInTransaction()
         return Result.completed(getSubscriptions())
+
+      database.removeSubscriptionsOfTabs = (tabIds) ->
+        console.log 'removeSubscriptionsOfTabs', tabIds
+        database.mustBeInTransaction()
+        subscriptions = _.reject(
+          getSubscriptions(),
+          ({tabId}) -> tabId in tabIds
+        )
+        setSubscriptions subscriptions
+        return Result.completed()

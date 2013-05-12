@@ -153,6 +153,7 @@ communication.
       Result.join([
         database.removeTabHeartbeats(tabIds)
         database.removeTabAlives(tabIds)
+        database.removeSubscriptionsOfTabs(tabIds)
       ]).then(->
         Meteor.defer -> tabsAreDead(tabIds)
         return
