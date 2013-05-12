@@ -6,7 +6,7 @@
 insecure
 preserve-inputs
 bootstrap
-coffeescript
 backbone
 jquery
 underscore
+offline-data
