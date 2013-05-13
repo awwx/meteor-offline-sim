@@ -79,13 +79,14 @@ Store data as strings to avoid objects and arrays constructed in one
 tab not being an instanceof Object or Array in another tab.
 
       Sim.databaseData = {
-        docs:          '{}'
-        stubDocuments: '{}'
-        queuedMethods: '{}'
-        subscriptions: '[]'
-        proxyTab:      'null'
-        tabHeartbeats: '{}'
-        tabAlives:      '{}'
+        docs:             '{}'
+        stubDocuments:    '{}'
+        queuedMethods:    '{}'
+        tabSubscriptions: '[]'
+        subscriptions:    '{}'
+        proxyTab:         'null'
+        tabHeartbeats:    '{}'
+        tabAlives:        '{}'
       }
 
 Don't include the tab heartbeats in the dump because they change
@@ -99,6 +100,8 @@ constantly.
           proxyTab: #{data.proxyTab}
 
           subscriptions: #{data.subscriptions}
+
+          tabSubscriptions: #{data.tabSubscriptions}
 
           queuedMethods: #{data.queuedMethods}
 
@@ -135,6 +138,12 @@ Pretty-print so that it's readable in the dump.
 
       stringify = (x) ->
         JSON.stringify(x, null, 2)
+
+
+Serialize objects in sorted key order so that they compare equal if
+they are structurally equal.
+
+      serialize = canonicalStringify
 
 
 Documents are a mirror of the server collection plus local
@@ -324,9 +333,57 @@ The proxy tab.
         return Result.completed(getProxyTab())
 
 
-The list of subscriptions that a tab is subscribed to.  A subscription
-is uniquely identified by the tabId, subscription name, and
-subscription arguments.
+The list of subscriptions that a tab is subscribed to.  A tab
+subscription is uniquely identified by (tabId, subscription name,
+subscription arguments).
+
+      mergeSubscriptions = (tabSubscriptions) ->
+        merged = []
+        for {tabId, name, args} in tabSubscriptions
+          subscription = {name, args}
+          unless _.find(merged, (s) -> EJSON.equals(s, subscription))
+            merged.push subscription
+        return merged
+
+      getTabSubscriptions = ->
+        JSON.parse(Sim.databaseData.tabSubscriptions)
+
+      getMergedSubscriptions = ->
+        mergeSubscriptions(getTabSubscriptions())
+
+      setTabSubscriptions = (tabSubscriptions) ->
+        Sim.databaseData.tabSubscriptions = stringify(tabSubscriptions)
+        Sim.databaseChanged()
+        return
+
+      database.addTabSubscription = (tabSubscription) ->
+        database.mustBeInTransaction()
+        tabSubscriptions = getTabSubscriptions()
+        unless _.find(tabSubscriptions, (s) -> EJSON.equals(s, tabSubscription))
+          tabSubscriptions.push tabSubscription
+        setTabSubscriptions tabSubscriptions
+        return Result.completed()
+
+      database.readTabSubscriptions = ->
+        database.mustBeInTransaction()
+        return Result.completed(getTabSubscriptions())
+
+      database.readMergedSubscriptions = ->
+        database.mustBeInTransaction()
+        return Result.completed(getMergedSubscriptions())
+
+      database.removeSubscriptionsOfTabs = (tabIds) ->
+        database.mustBeInTransaction()
+        tabSubscriptions = _.reject(
+          getTabSubscriptions(),
+          ({tabId}) -> tabId in tabIds
+        )
+        setTabSubscriptions tabSubscriptions
+        clearUnusedSubscriptions()
+        return Result.completed()
+
+Information about subscriptions, this time across all tabs: the key
+is (subscription name, subscription arguments).
 
       getSubscriptions = ->
         JSON.parse(Sim.databaseData.subscriptions)
@@ -336,24 +393,39 @@ subscription arguments.
         Sim.databaseChanged()
         return
 
-      database.addSubscription = (subscription) ->
+      database.ensureSubscription = (subscription) ->
+        database.mustBeInTransaction()
+        serialized = serialize(subscription)
+        subscriptions = getSubscriptions()
+        unless subscriptions[serialized]?
+          subscriptions[serialized] = {ready: false}
+          setSubscriptions subscriptions
+        return Result.completed()
+
+      database.setSubscriptionReady = (subscription) ->
+        database.mustBeInTransaction()
+        serialized = serialize(subscription)
+        subscriptions = getSubscriptions()
+        record = subscriptions[serialized]
+        if record?
+          record.ready = true
+          setSubscriptions subscriptions
+        return Result.completed()
+
+      database.readAllSubscriptionsReady = ->
         database.mustBeInTransaction()
         subscriptions = getSubscriptions()
-        unless _.find(subscriptions, (s) -> EJSON.equals(s, subscription))
-          subscriptions.push subscription
-        setSubscriptions subscriptions
-        return Result.completed()
-
-      database.readSubscriptions = ->
-        database.mustBeInTransaction()
-        return Result.completed(getSubscriptions())
-
-      database.removeSubscriptionsOfTabs = (tabIds) ->
-        console.log 'removeSubscriptionsOfTabs', tabIds
-        database.mustBeInTransaction()
-        subscriptions = _.reject(
-          getSubscriptions(),
-          ({tabId}) -> tabId in tabIds
+        return Result.completed(
+          _.every(_.values(subscriptions), ({ready}) -> ready)
         )
+
+      clearUnusedSubscriptions = ->
+        mergedSubscriptions = (serialize(subscription) for subscription in getMergedSubscriptions())
+        subscriptions = getSubscriptions()
+        toRemove = []
+        for subscription of subscriptions
+          unless subscription in mergedSubscriptions
+            toRemove.push subscription
+        delete subscriptions[key] for key in toRemove
         setSubscriptions subscriptions
-        return Result.completed()
+        return

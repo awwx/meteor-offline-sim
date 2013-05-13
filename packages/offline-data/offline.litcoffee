@@ -35,6 +35,11 @@ Add to our list of offline subscriptions.
 TODO callback when subscription is ready, and the `stop()` method to
 cancel the subscription.
 
+"ready" means we've finished loading saved data from the browser
+database, or, if this is a first subscription and we don't have data in
+the database yet, that we've finished loaded data from the server (the
+underlying server subscription is ready).
+
     Offline.subscribe = (name, args...) ->
       if Deps.active
         throw new Error(
@@ -42,63 +47,70 @@ cancel the subscription.
         )
 
       database.transaction(thisApp, 'add subscription', ->
-        database.addSubscription({tabId: thisTabId, name, args})
+        return Result.join([
+          database.addTabSubscription({tabId: thisTabId, name, args})
+          database.ensureSubscription({name, args})
+        ])
       ).then(->
         broadcast 'subscriptionAdded'
       )
 
 
-The list of subscriptions that we're subscribed to in this tab.
+The list of Meteor subscriptions that we're subscribed when we're the
+proxy tab.
 
-    subscriptionHandles = {}
-    nSubscriptionsReady = 0
+    meteorSubscriptionHandles = {}
+    nMeteorSubscriptionsReady = 0
 
-    alreadyHaveSubscription = (subscription) ->
-      !! subscriptionHandles[canonicalStringify(subscription)]
+    alreadyHaveMeteorSubscription = (subscription) ->
+      !! meteorSubscriptionHandles[canonicalStringify(subscription)]
 
-    allSubscriptionsReady = ->
-      nSubscriptionsReady is _.size(subscriptionHandles)
+    allMeteorSubscriptionsReady = ->
+      nMeteorSubscriptionsReady is _.size(meteorSubscriptionHandles)
+
 
 We are the proxy tab and all our subscriptions are ready.  We can now
 delete documents in the offline collection which are no longer present
 on the server.
 
-TODO oof rename please
+    deletedRemovedDocs = false
 
-    updatedOurData = false
-
-    updateOurData = ->
+    deleteRemovedDocuments = ->
       database.mustBeInTransaction()
-      if updatedOurData
+      if deletedRemovedDocs
         return Result.completed()
       else
-        updatedOurData = true
+        deletedRemovedDocs = true
         return forEachCollectionResult('deleteDocumentsGoneFromServer')
 
-    checkIfReadyToUpdate = ->
+    checkIfReadyToDeleteDocs = ->
       database.transaction(thisApp, 'all subscriptions ready', ->
         database.readProxyTab()
         .then((proxyTabId) =>
-          if proxyTabId is thisTabId and allSubscriptionsReady()
-            updateOurData()
+          if proxyTabId is thisTabId and allMeteorSubscriptionsReady()
+            deleteRemovedDocuments()
         )
       )
       return
 
-    mergeSubscriptions = (tabSubscriptions) ->
-      merged = []
-      for {tabId, name, args} in tabSubscriptions
-        subscription = {name, args}
-        unless _.find(merged, (s) -> EJSON.equals(s, subscription))
-          merged.push subscription
-      return merged
+    meteorSubscriptionReady = (subscription) ->
+      database.transaction(thisApp, 'subscription ready', ->
+        database.readProxyTab()
+        .then((proxyTabId) ->
+          if proxyTabId is thisTabId
+            return database.setSubscriptionReady(subscription)
+          else
+            return
+        )
+      )
+      return
 
-TODO we should listen on the error callback and do something.
+TODO should listen on the error callback and do something.
 
     updateSubscriptions = ->
       database.transaction(thisApp, 'subscribe to subscriptions', ->
         Result.join([
-          database.readSubscriptions()
+          database.readTabSubscriptions()
           database.readProxyTab()
         ])
       )
@@ -106,21 +118,22 @@ TODO we should listen on the error callback and do something.
         return unless proxyTabId is thisTabId
         subscriptions = mergeSubscriptions(tabSubscriptions)
 
-        for serializedSubscription, handle of subscriptionHandles
+        for serializedSubscription, handle of meteorSubscriptionHandles
           subscription = JSON.parse(serializedSubscription)
           unless _.find(subscriptions, (s) -> EJSON.equals(s, subscription))
             handle.stop()
-            delete subscriptionHandles[serializedSubscription]
+            delete meteorSubscriptionHandles[serializedSubscription]
 
-        for subscription in _.reject(subscriptions, alreadyHaveSubscription)
+        for subscription in _.reject(subscriptions, alreadyHaveMeteorSubscription)
           do (subscription) ->
-            updatedOurData = false
+            deletedRemovedDocs = false
             {name, args} = subscription
             handle = Meteor.subscribe name, args..., ->
-              ++nSubscriptionsReady
-              checkIfReadyToUpdate()
+              meteorSubscriptionReady(subscription)
+              ++nMeteorSubscriptionsReady
+              checkIfReadyToDeleteDocs()
               return
-            subscriptionHandles[canonicalStringify(subscription)] = handle
+            meteorSubscriptionHandles[canonicalStringify(subscription)] = handle
             return
 
         return
@@ -146,10 +159,10 @@ to updates from the server, so we don't need to stay subscribed
 ourselves.
 
     noLongerProxy.listen ->
-      for subscription, handle of subscriptionHandles
+      for subscription, handle of meteorSubscriptionHandles
         handle.stop()
-      subscriptionHandles = {}
-      nSubscriptionsReady = 0
+      meteorSubscriptionHandles = {}
+      nMeteorSubscriptionsReady = 0
       return
 
 

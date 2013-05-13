@@ -11,5 +11,5 @@ Package.on_use(function (api) {
     'proxytab',
     'canonical-stringify'
   ], 'client');
-  api.add_files(['offline.litcoffee'], 'client');
+  api.add_files(['offline.litcoffee'], ['client', 'server']);
 });
