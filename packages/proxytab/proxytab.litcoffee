@@ -154,7 +154,12 @@ communication.
         database.removeTabHeartbeats(tabIds)
         database.removeTabAlives(tabIds)
         database.removeSubscriptionsOfTabs(tabIds)
-      ]).then(->
+        database.removeTabUpdateIndexesForTabs(tabIds)
+      ])
+      .then(->
+        database.removeProcessedUpdates()
+      )
+      .then(->
         Meteor.defer -> tabsAreDead(tabIds)
         return
       )

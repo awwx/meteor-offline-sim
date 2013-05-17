@@ -79,14 +79,18 @@ Store data as strings to avoid objects and arrays constructed in one
 tab not being an instanceof Object or Array in another tab.
 
       Sim.databaseData = {
-        docs:             '{}'
-        stubDocuments:    '{}'
-        queuedMethods:    '{}'
-        tabSubscriptions: '[]'
-        subscriptions:    '{}'
-        proxyTab:         'null'
-        tabHeartbeats:    '{}'
-        tabAlives:        '{}'
+        docs:                 '{}'
+        updateCount:          '1'
+        tabUpdatePointers:    '{}'
+        updates:              '[]'
+        stubDocuments:        '{}'
+        queuedMethods:        '{}'
+        tabSubscriptions:     '[]'
+        subscriptions:        '{}'
+        methodsHoldingUpSubs: '{}'
+        proxyTab:             'null'
+        tabHeartbeats:        '{}'
+        tabAlives:            '{}'
       }
 
 Don't include the tab heartbeats in the dump because they change
@@ -104,6 +108,14 @@ constantly.
           tabSubscriptions: #{data.tabSubscriptions}
 
           queuedMethods: #{data.queuedMethods}
+
+          methodsHoldingUpSubs: #{data.methodsHoldingUpSubs}
+
+          updateCount: #{data.updateCount}
+
+          tabUpdatePointers: #{data.tabUpdatePointers}
+
+          updates: #{data.updates}
 
           stubDocuments: #{data.stubDocuments}
 
@@ -219,6 +231,16 @@ completes.
                 documentsNowFree.push({collectionName, docId})
          setStubDocs stubDocs
          return Result.completed(documentsNowFree)
+
+      database.readOutstandingMethodsWithStubDocuments = ->
+        database.mustBeInTransaction()
+        methodIds = {}
+        stubDocs = getStubDocs()
+        for collectionName, collectionDocs of stubDocs
+          for docId, methods of collectionDocs
+            for methodId of methods
+              methodIds[methodId] = true
+        return Result.completed(_.keys(methodIds))
 
 
 Queued methods are method calls made on the client that haven't been
@@ -372,6 +394,16 @@ subscription arguments).
         database.mustBeInTransaction()
         return Result.completed(getMergedSubscriptions())
 
+      database.removeTabSubscription = (tabSubscription) ->
+        database.mustBeInTransaction()
+        tabSubscriptions = _.reject(
+          getTabSubscriptions(),
+          (s) -> EJSON.equals(s, tabSubscription)
+        )
+        setTabSubscriptions tabSubscriptions
+        clearUnusedSubscriptions()
+        return Result.completed()
+
       database.removeSubscriptionsOfTabs = (tabIds) ->
         database.mustBeInTransaction()
         tabSubscriptions = _.reject(
@@ -398,13 +430,32 @@ is (subscription name, subscription arguments).
         serialized = serialize(subscription)
         subscriptions = getSubscriptions()
         unless subscriptions[serialized]?
-          subscriptions[serialized] = {ready: false}
+          subscriptions[serialized] = {
+            readyFromServer: false
+            ready: false
+          }
           setSubscriptions subscriptions
         return Result.completed()
 
-      database.setSubscriptionReady = (subscription) ->
+      database.haveSubscription = (subscription) ->
         database.mustBeInTransaction()
         serialized = serialize(subscription)
+        subscriptions = getSubscriptions()
+        haveSubscription = subscriptions[serialized]?
+        return Result.completed(haveSubscription)
+
+      database.setSubscriptionReadyFromServer = (subscription) ->
+        database.mustBeInTransaction()
+        serialized = serialize(subscription)
+        subscriptions = getSubscriptions()
+        record = subscriptions[serialized]
+        if record?
+          record.readyFromServer = true
+          setSubscriptions subscriptions
+        return Result.completed()
+
+      database.setSubscriptionReady = (serialized) ->
+        database.mustBeInTransaction()
         subscriptions = getSubscriptions()
         record = subscriptions[serialized]
         if record?
@@ -412,12 +463,9 @@ is (subscription name, subscription arguments).
           setSubscriptions subscriptions
         return Result.completed()
 
-      database.readAllSubscriptionsReady = ->
+      database.readSubscriptions = ->
         database.mustBeInTransaction()
-        subscriptions = getSubscriptions()
-        return Result.completed(
-          _.every(_.values(subscriptions), ({ready}) -> ready)
-        )
+        return Result.completed(getSubscriptions())
 
       clearUnusedSubscriptions = ->
         mergedSubscriptions = (serialize(subscription) for subscription in getMergedSubscriptions())
@@ -429,3 +477,141 @@ is (subscription name, subscription arguments).
         delete subscriptions[key] for key in toRemove
         setSubscriptions subscriptions
         return
+
+Keep track of which methods had local writes (stub documents) at the
+time a new subscription was subscribed to.  These methods are "holding
+up" the subscription being ready (a subscription doesn't become ready
+until previous local writes have been flushed, but writes after
+subscribing to the subscription don't matter).
+
+      getMethodsHoldingUpSubs = ->
+        JSON.parse(Sim.databaseData.methodsHoldingUpSubs)
+
+      setMethodsHoldingUpSubs = (methodsHoldingUpSubs) ->
+        Sim.databaseData.methodsHoldingUpSubs = stringify(methodsHoldingUpSubs)
+        Sim.databaseChanged()
+        return
+
+      database.addSubscriptionWaitingOnMethods = (subscription, methodIds) ->
+        database.mustBeInTransaction()
+        serialized = serialize(subscription)
+        holdingUp = getMethodsHoldingUpSubs()
+        for methodId in methodIds
+          list = (holdingUp[methodId] or= [])
+          list.push(serialized) unless _.contains(list, serialized)
+        setMethodsHoldingUpSubs holdingUp
+        return Result.completed()
+
+      database.removeMethodHoldingUpSubs = (methodId) ->
+        database.mustBeInTransaction()
+        holdingUp = getMethodsHoldingUpSubs()
+        delete holdingUp[methodId]
+        setMethodsHoldingUpSubs holdingUp
+        return Result.completed()
+
+      database.readSubsHeldUp = ->
+        database.mustBeInTransaction()
+        subsHeldUp = {}
+        holdingUp = getMethodsHoldingUpSubs()
+        for methodId, subs of holdingUp
+          for sub in subs
+            subsHeldUp[sub] = true
+        return Result.completed(_.keys(subsHeldUp))
+
+
+A queue of recent updates.  This allows a tab to quickly catch up and
+ensure that it has the latest data at the beginning of a transaction.
+We can also easily ensure processing updates in a specific order (such
+as updating documents and then marking a subscription as ready).
+
+Each tab has a pointer into the queue to keep track of which updates
+it has already applied.  Updates are removed from the queue once all
+tabs have processed an update.  Dead tabs have their pointer removed
+(which in turn can free up old updates to be removed when all
+remaining pointers have gone past the update).
+
+      getUpdateCount = ->
+        JSON.parse(Sim.databaseData.updateCount)
+
+      setUpdateCount = (updateCount) ->
+        Sim.databaseData.updateCount = updateCount
+        Sim.databaseChanged()
+        return
+
+      getUpdates = ->
+        JSON.parse(Sim.databaseData.updates)
+
+      setUpdates = (updates) ->
+        Sim.databaseData.updates = stringify(updates)
+        Sim.databaseChanged()
+        return
+
+      getTabUpdatePointers = ->
+        JSON.parse(Sim.databaseData.tabUpdatePointers)
+
+      setTabUpdatePointers = (tabUpdatePointers) ->
+        Sim.databaseData.tabUpdatePointers = stringify(tabUpdatePointers)
+        Sim.databaseChanged()
+        return
+
+      database.addUpdate = (update) ->
+        database.mustBeInTransaction()
+        updateCount = getUpdateCount()
+        updates = getUpdates()
+        update = EJSON.clone(update)
+        update.index = updateCount
+        updates.push update
+        ++updateCount
+        setUpdateCount updateCount
+        setUpdates updates
+        return Result.completed()
+
+      database.initializeTabUpdateIndex = (tabId) ->
+        database.mustBeInTransaction()
+        updateCount = getUpdateCount()
+        pointers = getTabUpdatePointers()
+        pointers[tabId] = updateCount
+        setTabUpdatePointers pointers
+        return Result.completed()
+
+      database.removeTabUpdateIndexesForTabs = (tabIds) ->
+        database.mustBeInTransaction()
+        pointers = getTabUpdatePointers()
+        for tabId in tabIds
+          delete pointers[tabId]
+        setTabUpdatePointers pointers
+        return Result.completed()
+
+      database.removeProcessedUpdates = ->
+        database.mustBeInTransaction()
+        pointers = getTabUpdatePointers()
+        updates = getUpdates()
+        toRemove = 0
+        for update in updates
+          remove = true
+          for tabId, index of pointers
+            remove = false if index <= update.index
+          if remove
+            ++toRemove
+          else
+            break
+        while toRemove-- > 0
+          updates.shift()
+        setUpdates updates
+        return Result.completed()
+
+      database.pullUpdatesForTab = (tabId) ->
+        database.mustBeInTransaction()
+        updates = getUpdates()
+        pointers = getTabUpdatePointers()
+        count = getUpdateCount()
+
+        index = pointers[tabId]
+        return Result.completed([]) unless index?
+        result = _.filter(updates, (update) -> update.index >= index)
+        pointers[tabId] = count
+
+        setTabUpdatePointers pointers
+        setUpdateCount count
+
+        return Result.completed(result)

@@ -29,8 +29,132 @@ algorithm).
 
     Offline = (@Offline or= {})
 
+    serialize = canonicalStringify
 
-Add to our list of offline subscriptions.
+    initialized = new Result()
+
+    database.transaction(thisApp, 'initialize', ->
+      Result.join([
+        database.initializeTabUpdateIndex(thisTabId)
+        database.readDocs()
+        database.readSubscriptions()
+      ])
+    )
+    .then(([ignore, collectionDocs, subscriptions]) ->
+      for collectionName, docs of collectionDocs
+        for docId, doc of docs
+          updateLocal collectionName, docId, doc
+
+      for serialized, record of subscriptions
+        if record.ready
+          setSubscriptionReady serialized, true
+
+      initialized.complete()
+      return
+    )
+
+
+An offline subscription is ready when:
+
+* the underlying Meteor subscription is ready
+
+* server documents have been stored in the database
+
+* database documents have been copied to the local collection
+
+    subscriptionReadyDeps = {}
+    subscriptionReady = {}
+
+    @getSubscriptionReady = (subscription) ->
+      serialized = serialize(subscription)
+      dep = (subscriptionReadyDeps[serialized] or= new Deps.Dependency)
+      dep.depend()
+      unless subscriptionReady[serialized]?
+        subscriptionReady[serialized] = false
+      return subscriptionReady[serialized]
+
+    setSubscriptionReady = (serializedSubscription, ready) ->
+      dep = (subscriptionReadyDeps[serializedSubscription] or= new Deps.Dependency)
+      if subscriptionReady[serializedSubscription] isnt ready
+        subscriptionReady[serializedSubscription] = ready
+        dep.changed()
+      return
+
+
+Read which subscriptions are ready from the database and update our
+reactive data source.  A subscription will only transition from not
+ready to ready while we're subscribed to it.  Subscriptions not in the
+database are considered not ready, so if we stop subscribing and no
+other tabs are subscribed then a subscription can become not ready
+again.
+
+Subscriptions become ready when they are ready from the server and
+they don't have methods holding them up.
+
+TODO set subscriptions not ready which no longer have any subscribers.
+
+        # # subscriptions not in the database
+        # for serialized, ready of subscriptionReady
+        #   if serialized not of subscriptions
+        #     setSubscriptionReady serialized, false
+
+    updateSubscriptionsReadyInTransaction = ->
+      database.mustBeInTransaction()
+      Result.join([
+        database.readSubscriptions()
+        database.readSubsHeldUp()
+      ])
+      .then(([subscriptions, subscriptionsHeldUp]) ->
+        newlyReady = []
+        for serialized, {readyFromServer, ready} of subscriptions
+          if not ready and readyFromServer and serialized not in subscriptionsHeldUp
+            newlyReady.push serialized
+        if newlyReady.length is 0
+          return false
+        writes = []
+        for serialized in newlyReady
+          writes.push database.setSubscriptionReady(serialized)
+          writes.push database.addUpdate {update: 'subscriptionReady', subscription: JSON.parse(serialized)}
+        Result.join(writes)
+        .then(-> return true)
+      )
+
+    updateSubscriptionsReady = ->
+      database.transaction(thisApp, 'update subscriptions ready', ->
+        updateSubscriptionsReadyInTransaction()
+      ).then((someNewlyReady) ->
+        if someNewlyReady
+          broadcast 'update'
+      )
+      return
+
+    addNewSubscriptionToDatabase = (name, args) ->
+      database.mustBeInTransaction()
+      database.readOutstandingMethodsWithStubDocuments()
+      .then((methodIds) ->
+        database.addSubscriptionWaitingOnMethods({name, args}, methodIds)
+      )
+      .then(->
+        database.ensureSubscription({name, args})
+      )
+
+    addTabSubscriptionToDatabase = (name, args) ->
+      database.transaction(thisApp, 'add subscription', ->
+        return Result.join([
+          database.addTabSubscription({tabId: thisTabId, name, args})
+          database.haveSubscription({name, args})
+        ])
+        .then((ignore, haveSubscription) ->
+          if haveSubscription
+            return
+          else
+            return addNewSubscriptionToDatabase name, args
+        )
+      ).then(->
+        broadcast 'subscriptionsUpdated'
+      )
+
+Add to this tab's list of offline subscriptions.
 
 TODO callback when subscription is ready, and the `stop()` method to
 cancel the subscription.
@@ -40,23 +164,61 @@ database, or, if this is a first subscription and we don't have data in
 the database yet, that we've finished loaded data from the server (the
 underlying server subscription is ready).
 
+TODO support `onError` (will need to store error in database)
+
     Offline.subscribe = (name, args...) ->
+
+      last = _.last(args)
+      if _.isFunction(last)
+        args = _.initial(args)
+        onReady = last
+        onError = (->)
+      else if last? and (_.isFunction(last.onReady) or _.isFunction(last.onError))
+        args = _.initial(args)
+        onReady = last.onReady ? (->)
+        onError = last.onError ? (->)
+      else
+        onReady = (->)
+        onError = (->)
+
       if Deps.active
         throw new Error(
           'reactive offline subscriptions are not yet implemented'
         )
 
-      database.transaction(thisApp, 'add subscription', ->
-        return Result.join([
-          database.addTabSubscription({tabId: thisTabId, name, args})
-          database.ensureSubscription({name, args})
-        ])
-      ).then(->
-        broadcast 'subscriptionAdded'
-      )
+      addTabSubscriptionToDatabase name, args
+
+      stopped = false
+
+      handle = {
+        ready: ->
+          if stopped
+            return false
+          else
+            return getSubscriptionReady({name, args})
+
+        stop: ->
+          return if stopped
+          stopped = true
+          database.transaction(thisApp, 'remove tab subscription', ->
+            database.removeTabSubscription({tabId: thisTabId, name, args})
+          ).then(->
+            Meteor.defer -> broadcast 'subscriptionsUpdated'
+          )
+          return
+      }
+
+      computation = Deps.autorun ->
+        if handle.ready()
+          console.log thisTabId, 'subscription is now ready', name, args
+          onReady()
+          computation.stop()
+        return
+
+      return handle
 
 
-The list of Meteor subscriptions that we're subscribed when we're the
+The list of Meteor subscriptions that we've subscribed when we're the
 proxy tab.
 
     meteorSubscriptionHandles = {}
@@ -91,6 +253,9 @@ on the server.
             deleteRemovedDocuments()
         )
       )
+      .then(->
+        broadcast 'update'
+      )
       return
 
     meteorSubscriptionReady = (subscription) ->
@@ -98,25 +263,30 @@ on the server.
         database.readProxyTab()
         .then((proxyTabId) ->
           if proxyTabId is thisTabId
-            return database.setSubscriptionReady(subscription)
+            return database.setSubscriptionReadyFromServer(subscription)
           else
             return
+        ).then(->
+          updateSubscriptionsReadyInTransaction()
         )
+      ).then(->
+        broadcast 'update'
       )
       return
 
-TODO should listen on the error callback and do something.
-
     updateSubscriptions = ->
+      # all tabs update their knowledge of which subscriptions are ready
+      updateSubscriptionsReady()
+
+      # only the proxy tab subscribes to the Meteor subscription
       database.transaction(thisApp, 'subscribe to subscriptions', ->
         Result.join([
-          database.readTabSubscriptions()
+          database.readMergedSubscriptions()
           database.readProxyTab()
         ])
       )
-      .then(([tabSubscriptions, proxyTabId]) ->
+      .then(([subscriptions, proxyTabId]) ->
         return unless proxyTabId is thisTabId
-        subscriptions = mergeSubscriptions(tabSubscriptions)
 
         for serializedSubscription, handle of meteorSubscriptionHandles
           subscription = JSON.parse(serializedSubscription)
@@ -144,7 +314,7 @@ TODO should listen on the error callback and do something.
 A tab only subscribes to the shared subscriptions when it is the proxy
 tab.
 
-    broadcast.listen 'subscriptionAdded', ->
+    broadcast.listen 'subscriptionsUpdated', ->
       updateSubscriptions()
 
     nowProxy.listen ->
@@ -166,20 +336,35 @@ ourselves.
       return
 
 
-    copyServerToLocal = (collectionName, docId) ->
-      return offlineCollections[collectionName].copyServerToLocal(docId)
+    copyServerToDatabase = (collectionName, docId) ->
+      return offlineCollections[collectionName].copyServerToDatabase(docId)
 
+
+TODO no longer proxy tab
 
     methodCompleted = (methodId) ->
       database.transaction(thisApp, 'method completed', ->
-        database.removeQueuedMethod(methodId)
-        .then(-> database.removeDocumentsWrittenByStub(methodId))
-        .then((documentsNowFree) ->
-          writes = []
-          for {collectionName, docId} in documentsNowFree
-            writes.push copyServerToLocal(collectionName, docId)
-          return Result.join(writes)
+        database.readProxyTab()
+        .then((proxyTabId) ->
+          return unless proxyTabId is thisTabId
+          database.removeQueuedMethod(methodId)
+          .then(-> database.removeDocumentsWrittenByStub(methodId))
+          .then((documentsNowFree) ->
+            writes = []
+            for {collectionName, docId} in documentsNowFree
+              writes.push copyServerToDatabase(collectionName, docId)
+            return Result.join(writes)
+          )
+          .then(->
+            database.removeMethodHoldingUpSubs(methodId)
+          )
+          .then(->
+            updateSubscriptionsReady()
+          )
         )
+      )
+      .then(->
+        broadcast 'update'
       )
       return
 
@@ -269,6 +454,8 @@ transaction).
 TODO the queued methods should be ordered so that we send them in the
 order that they were called.
 
+TODO only send queued methods from the proxy tab
+
       sendQueuedMethods: ->
         database.transaction(thisApp, 'send queued methods', ->
           database.readQueuedMethods()
@@ -311,8 +498,9 @@ TODO fixme
             exception = e
           return Result.completed({ret, exception})
 
+
         database.transaction(thisApp, 'run method stub', =>
-          reloadAll()
+          processUpdatesInTransaction()
           .then(=>
             saveOriginals()
             try
@@ -325,6 +513,7 @@ TODO fixme
           )
         )
         .then(=>
+          broadcast 'update'
           if exception
             return Result.failed(exception)
           else
@@ -383,6 +572,25 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
       offlineConnection.sendQueuedMethods()
 
 
+    localCollections = {}
+
+    getLocalCollection = (collectionName) ->
+      localCollections[collectionName] or= new LocalCollection()
+
+    updateLocal = (collectionName, docId, doc) ->
+      localCollection = getLocalCollection(collectionName)
+      if doc?
+        if doc._id isnt docId
+          throw new Error("oops, document id doesn't match")
+        if localCollection.findOne(docId)?
+          localCollection.update(docId, doc)
+        else
+          localCollection.insert(doc)
+      else
+        localCollection.remove(docId)
+      return
+
+
     class OfflineCollection
 
       constructor: (@name) ->
@@ -396,7 +604,7 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
         offlineCollections[@name] = this
 
         @serverCollection = new Meteor.Collection(@name)
-        @localCollection = new LocalCollection()
+        @localCollection = getLocalCollection(@name)
         @connection = offlineConnection
 
         driver =
@@ -413,17 +621,15 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
           {manager: @connection, _driver: driver}
         )
 
-        database.transaction(thisApp, 'initial load from database', =>
-          @loadFromDatabase()
-        )
-        .then(=> @watchServer())
+        @watchServer()
+
 
 A document has changed in the server collection (the local client
 mirror of our subscriptions to the server).
 
-Ignore updates from the server if this tab isn't the proxy tab (our
-livedata connection isn't necessarily exactly in sync with the proxy
-tab's connection).
+Ignore updates from the server if this tab isn't the proxy tab (this
+tab's livedata connection isn't necessarily exactly in sync with the
+proxy tab's connection).
 
 We also defer updating if the document has been written by a stub of a
 method still in flight.
@@ -438,16 +644,20 @@ method still in flight.
             if proxyTabId isnt thisTabId or wasWritten
               return
             else
-              if doc?
-                return database.writeDoc @name, doc
+              (if doc?
+                database.writeDoc @name, doc
               else
-                return database.deleteDoc @name, docId
+                database.deleteDoc @name, docId
+              ).then(=>
+                database.addUpdate {update: 'documentUpdated', name: @name, docId, doc}
+              )
           )
         )
         .then(=>
-          broadcast 'documentUpdated', @name, docId
+          broadcast 'update'
         )
         return
+
 
       watchServer: ->
         @serverCollection.find().observe
@@ -456,46 +666,17 @@ method still in flight.
           removed: (doc) => @serverDocUpdated doc._id, null
         return
 
-      updateLocal: (docId, doc) ->
-        if doc?
-          if doc._id isnt docId
-            throw new Error("oops, document id doesn't match")
-          if @localCollection.findOne(docId)?
-            @localCollection.update(docId, doc)
-          else
-            @localCollection.insert(doc)
-        else
-          @localCollection.remove(docId)
-        return
 
+TODO some duplicate code with writeMethodChanges in addUpdate, and
+calling findOne twice on the serverCollection.
 
-      copyServerToLocal: (docId) ->
-        @updateLocal docId, @serverCollection.findOne(docId)
-        return writeDoc(@name, @localCollection, docId)
-
-
-      documentUpdated: (docId) ->
-        database.transaction(thisApp, 'document updated', =>
-          database.readDoc(@name, docId)
-        )
-        .then((doc) =>
-          @updateLocal docId, doc
-        )
-        return
-
-      loadFromDatabase: ->
+      copyServerToDatabase: (docId) ->
         database.mustBeInTransaction()
-        idsToDelete = {}
-        @localCollection.find({}).forEach((doc) -> idsToDelete[doc._id] = true)
-        database.readDocsInCollection(@name)
-        .then((docs) =>
-          for docId, doc of docs
-            delete idsToDelete[doc._id]
-            @updateLocal doc._id, doc
-          for id in idsToDelete
-            @localCollection.remove id
-          return
-        )
+        return Result.join([
+          writeDoc(@name, @serverCollection, docId)
+          database.addUpdate({update: 'documentUpdated', name: @name, docId, doc: @serverCollection.findOne(docId)})
+        ])
+
 
 We have a full and complete set of data from the server (our
 subscriptions are ready).  We can now delete documents in the offline
@@ -508,12 +689,15 @@ collection which are no longer present on the server.
           if wasWritten
             return
           else
-            return database.deleteDoc @name, docId
+            database.deleteDoc(@name, docId)
+            .then(=>
+              database.addUpdate {update: 'documentUpdated', name: @name, docId}
+            )
         )
 
       deleteDocumentsGoneFromServer: ->
         database.mustBeInTransaction()
-        @loadFromDatabase()
+        processUpdatesInTransaction()
         .then(=>
           idsToDelete = []
           @localCollection.find({}).forEach (doc) =>
@@ -523,15 +707,10 @@ collection which are no longer present on the server.
           writes = []
           for docId in idsToDelete
             writes.push @deleteDocUnlessWrittenByStub(docId)
-          Result.join(writes)
-          .then(=>
-            Meteor.defer =>
-              # TODO documentsUpdated message
-              for docId in idsToDelete
-                broadcast 'documentUpdated', @name, docId
-            return
-          )
+          return Result.join(writes)
         )
+
+TODO maybe rename "name" to "collection"
 
       writeMethodChanges: (methodId) ->
         database.mustBeInTransaction()
@@ -540,7 +719,7 @@ collection which are no longer present on the server.
         for docId of originals
           writes.push writeDoc(@name, @localCollection, docId)
           writes.push database.addDocumentWrittenByStub(methodId, @name, docId)
-          broadcast 'documentUpdated', @name, docId
+          writes.push database.addUpdate {update: 'documentUpdated', name: @name, docId, doc: @localCollection.findOne(docId)}
         return Result.join(writes)
 
 For each offline collection, call the method `methodName` on that
@@ -562,17 +741,18 @@ of calling the method on that collection.
       r = forEachCollection(methodName, args...)
       return Result.join(_.values(r))
 
-    reloadAll = ->
-      database.mustBeInTransaction()
-      return forEachCollectionResult('loadFromDatabase')
-
     saveOriginals = ->
       for name, offlineCollection of offlineCollections
         offlineCollection.localCollection.saveOriginals()
       return
 
-    writeDoc = (name, localCollection, docId) ->
-      doc = localCollection.findOne(docId)
+`collection` can be our localCollection or serverCollection, depending
+on the source of the document we're writing.
+
+TODO should every `writeDoc` also add the update to the database?
+
+    writeDoc = (name, collection, docId) ->
+      doc = collection.findOne(docId)
       if doc?
         return database.writeDoc name, doc
       else
@@ -583,10 +763,56 @@ of calling the method on that collection.
       r = forEachCollectionResult('writeMethodChanges', methodId)
       return r
 
-    broadcast.listen 'documentUpdated', (collectionName, id) ->
-      return if thisApp.closed
-      offlineCollections[collectionName]?.documentUpdated(id)
+
+TODO what if we just wrote to the document in a stub?
+
+    processDocumentUpdated = (update) ->
+      {name, docId, doc} = update
+      updateLocal name, docId, doc
       return
+
+    processSubscriptionReady = (update) ->
+      {subscription} = update
+      setSubscriptionReady serialize(subscription), true
+      return
+
+    processUpdate = (update) ->
+      switch update.update
+        when 'documentUpdated'   then processDocumentUpdated(update)
+        when 'subscriptionReady' then processSubscriptionReady(update)
+        else
+          throw new Error "unknown update: " + serialize(update)
+      return
+
+    processUpdatesInTransaction = ->
+      database.mustBeInTransaction()
+      database.pullUpdatesForTab(thisTabId)
+      .then((updates) ->
+        database.removeProcessedUpdates()
+        .then(->
+          processUpdate(update) for update in updates
+          return
+        )
+      )
+
+    processUpdates = ->
+      database.transaction(thisApp, 'process updates', ->
+        database.pullUpdatesForTab(thisTabId)
+        .then((updates) ->
+          database.removeProcessedUpdates()
+          .then(->
+            return updates
+          )
+        )
+      )
+      .then((updates) ->
+        processUpdate(update) for update in updates
+        return
+      )
+      return
+
+
+    broadcast.listen 'update', processUpdates
 
 
 TODO allow to be called from the server?

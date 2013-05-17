@@ -9,8 +9,6 @@ Template.app.connectionStatus = function () {
 
 // Define Minimongo collections to match server/publish.js.
 // OFFLINE open offline collections.
-Offline.subscribe("lists");
-Offline.subscribe("todos");
 Lists = Offline.openCollection("lists");
 Todos = Offline.openCollection("todos");
 
@@ -29,31 +27,20 @@ Session.setDefault('editing_listname', null);
 // When editing todo text, ID of the todo
 Session.setDefault('editing_itemname', null);
 
-// TODO OFFLINE subscription ready callback isn't implemented yet.
-// // Subscribe to 'lists' collection on startup.
-// // Select a list once data has arrived.
-// var listsHandle = Meteor.subscribe('lists', function () {
-//   if (!Session.get('list_id')) {
-//     var list = Lists.findOne({}, {sort: {name: 1}});
-//     if (list)
-//       Router.setList(list._id);
-//   }
-// });
+// Subscribe to 'lists' collection on startup.
+// Select a list once data has arrived.
+var listsHandle = Offline.subscribe('lists', function () {
+  if (!Session.get('list_id')) {
+    var list = Lists.findOne({}, {sort: {name: 1}});
+    if (list)
+      Router.setList(list._id);
+  }
+});
 
 // OFFLINE
-// var todosHandle = null;
-// // Always be subscribed to the todos for the selected list.
-// Deps.autorun(function () {
-//   var list_id = Session.get('list_id');
-//   if (list_id)
-//     todosHandle = Meteor.subscribe('todos', list_id);
-//   else
-//     todosHandle = null;
-// });
-
 // Subscribe to all todos, so the user can switch between lists while
 // offline.
-Meteor.subscribe('todos');
+var todosHandle = Meteor.subscribe('todos');
 
 ////////// Helpers for in-place editing //////////
 
@@ -92,10 +79,9 @@ var activateInput = function (input) {
 
 ////////// Lists //////////
 
-// TODO OFFLINE not implemented yet.
-// Template.lists.loading = function () {
-//   return !listsHandle.ready();
-// };
+Template.lists.loading = function () {
+  return !listsHandle.ready();
+};
 
 Template.lists.lists = function () {
   return Lists.find({}, {sort: {name: 1}});
@@ -153,10 +139,9 @@ Template.lists.editing = function () {
 
 ////////// Todos //////////
 
-// TODO OFFLINE callback for subscription ready not implemented yet.
-// Template.todos.loading = function () {
-//   return todosHandle && !todosHandle.ready();
-// };
+Template.todos.loading = function () {
+  return todosHandle && !todosHandle.ready();
+};
 
 Template.todos.any_list_selected = function () {
   return !Session.equals('list_id', null);
