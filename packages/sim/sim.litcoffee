@@ -165,9 +165,15 @@ Peek at the collections on the server.
       Meteor.subscribe('todos')
       Lists = new Meteor.Collection('lists')
       Todos = new Meteor.Collection('todos')
+
+      Meteor.subscribe("directory");
+      Meteor.subscribe("parties");
+      Parties = new Meteor.Collection("parties");
+
       Template.server.server = ->
         'lists: ' + JSON.stringify(Lists.find().fetch(), null, 2) + "\n\n" +
-        'todos: ' + JSON.stringify(Todos.find().fetch(), null, 2)
+        'todos: ' + JSON.stringify(Todos.find().fetch(), null, 2) + "\n\n" +
+        'parties: ' + JSON.stringify(Parties.find().fetch(), null, 2)
 
       Template.database.database = -> Sim.dumpDatabase()
 

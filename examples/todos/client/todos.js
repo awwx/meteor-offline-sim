@@ -40,7 +40,7 @@ var listsHandle = Offline.subscribe('lists', function () {
 // OFFLINE
 // Subscribe to all todos, so the user can switch between lists while
 // offline.
-var todosHandle = Meteor.subscribe('todos');
+var todosHandle = Offline.subscribe('todos');
 
 ////////// Helpers for in-place editing //////////
 

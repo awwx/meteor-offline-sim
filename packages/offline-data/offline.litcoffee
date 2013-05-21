@@ -21,6 +21,18 @@ algorithm).
           return Meteor.apply name, params
 
 
+On the server, Offline.methods etc. simply delegate to their Meteor
+counterpart.
+
+      Offline = (@Offline or= {})
+
+      Offline.methods = (methods) ->
+        Meteor.methods methods
+
+      Offline.openCollection = (args...) ->
+        new Meteor.Collection(args...)
+
+
 ## Client App ##
 
     return unless Meteor.isClient and isApp
@@ -210,7 +222,6 @@ TODO support `onError` (will need to store error in database)
 
       computation = Deps.autorun ->
         if handle.ready()
-          console.log thisTabId, 'subscription is now ready', name, args
           onReady()
           computation.stop()
         return
@@ -387,6 +398,28 @@ We may successfully run the method on the server but `methodCompleted`
 might not get called if the browser tab is closed, or if we lose the
 Internet connection before we get the reply back.
 
+TODO keep track of which tab has sent a method and don't send it again
+as long as that tab is alive.
+
+TODO the server sends a DDP "methods" message to the client with the
+method ids whose writes have been reflected in previous data messages.
+Only the proxy tab is subscribed, so the "methods" message will only
+mean anything in the proxy tab.  Thus we want to make method calls
+from the proxy tab.
+
+What happens if we change proxy tabs A) while offline and some method
+calls are waiting to be sent or B) we are online and we've just sent
+the method call?
+
+Problem: Meteor will automatically retry sending method calls from a
+tab until it goes online again.  So once a method call has been queued
+up in a tab, it will eventually be sent if the app goes online.  So if
+in iOS we change the proxy tab to whichever tab is active, we can
+easily end up with multiple tabs all sending the same message.
+
+TODO can we hack livedata_connection to abort sending messages?
+
+
     sendQueuedMethod = (methodId, name, args) ->
       return if methodsSent[methodId]
       args = EJSON.parse(args)
@@ -405,14 +438,6 @@ Is the URL available from the LivedataConnection?
     methodHandlers = {}
 
 
-https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_connection.js#L534
-
-    Offline.call = (name, args...) ->
-      if args.length and typeof args[args.length - 1] is 'function'
-        callback = args.pop()
-      return Offline.apply(name, args, callback)
-
-
     class OfflineConnection
 
       constructor: (@realConnection) ->
@@ -426,6 +451,12 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
 
       addBrowserCollection: (name, browserCollection) ->
         @_browserCollections[name] = browserCollection
+
+      userId: ->
+        @realConnection.userId()
+
+      setUserId: (userId) ->
+        @realConnection.setUserId(userId)
 
 
 https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_connection.js#L525
@@ -479,12 +510,12 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
         stub = @methodHandlers[name]
         return unless stub
 
-TODO userId, setUserId: anything special we'd need to do with offline data?
-
 TODO sessionData: use the same sessionData as the real connection or our own?
 
         invocation = new Meteor._MethodInvocation({
           isSimulation: true
+          userId: @userId()
+          setUserId: (userId) => @setUserId(userId)
         })
 
 TODO fixme
@@ -496,8 +527,10 @@ TODO fixme
             )
           catch e
             exception = e
-          return Result.completed({ret, exception})
-
+          if exception
+            return Result.failed(exception)
+          else
+            return Result.completed(ret)
 
         database.transaction(thisApp, 'run method stub', =>
           processUpdatesInTransaction()
@@ -521,6 +554,14 @@ TODO fixme
         )
 
 
+https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_connection.js#L534
+
+      call: (name, args...) ->
+        if args.length and typeof args[args.length - 1] is 'function'
+          callback = args.pop()
+        return @apply(name, args, callback)
+
+
 https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_connection.js#L543
 
       apply: (name, args, options, callback) ->
@@ -538,22 +579,21 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
         enclosing = Meteor._CurrentInvocation.get()
         alreadyInSimulation = enclosing and enclosing.isSimulation
 
-        if alreadyInSimulation
-          throw new Error('not implemented yet')
-
         @_runStub(methodId, alreadyInSimulation, name, args)
         .then(=>
+          return if alreadyInSimulation
           database.transaction(thisApp, 'add queued method', =>
             database.addQueuedMethod(methodId, name, EJSON.stringify(args))
           )
-        )
-        .then(=>
-          Meteor.defer(=> @sendQueuedMethods())
-          return
+          .then(=>
+            Meteor.defer(=> @sendQueuedMethods())
+            return
+          )
         )
 
         return
 
+TODO
         # if exception and not exception.expected
         #   Meteor._debug("Exception while simulating the effect of invoking '" +
         #                 name + "'", exception, exception.stack)
@@ -563,13 +603,21 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
 
     return unless isApp
 
-    offlineConnection = new OfflineConnection(Meteor.default_connection)
+    @defaultOfflineConnection = new OfflineConnection(Meteor.default_connection)
 
     Offline._offlineCollections = offlineCollections = {}
 
+    Offline.methods = (methods) ->
+      defaultOfflineConnection.methods methods
+
+    Offline.call = (args...) ->
+      defaultOfflineConnection.call args...
+
+    Offline.apply = (args...) ->
+      defaultOfflineConnection.apply args...
 
     Meteor.startup ->
-      offlineConnection.sendQueuedMethods()
+      defaultOfflineConnection.sendQueuedMethods()
 
 
     localCollections = {}
@@ -593,7 +641,7 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
 
     class OfflineCollection
 
-      constructor: (@name) ->
+      constructor: (@name, @serverCollection) ->
         if Meteor.isServer
           throw new Error('client only')
 
@@ -603,9 +651,8 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
           )
         offlineCollections[@name] = this
 
-        @serverCollection = new Meteor.Collection(@name)
         @localCollection = getLocalCollection(@name)
-        @connection = offlineConnection
+        @connection = defaultOfflineConnection
 
         driver =
           open: (_name) =>
@@ -815,15 +862,18 @@ TODO what if we just wrote to the document in a stub?
     broadcast.listen 'update', processUpdates
 
 
-TODO allow to be called from the server?
+Currently return a Meteor.Collection as our offline collection (munged
+internally to use the "offline" connection)... but the API will have
+to change to support getting the results of calling methods.
 
-    openOfflineCollection = (name) ->
-      new OfflineCollection(name).collection
+    Offline.wrapCollection = (serverCollection) ->
+      return (new OfflineCollection(
+        serverCollection._name,
+        serverCollection)
+      ).collection
 
 
-We actually return a Meteor.Collection as our offline collection
-(munged internally to use the "offline" connection)... so the API
-can't be "new OfflineCollection".  But the API will have to change
-anyway to support getting the results of calling methods.
+TODO `new Offline.Collection`
 
-    Offline.openCollection = openOfflineCollection
+    Offline.openCollection = (name) ->
+      Offline.wrapCollection(new Meteor.Collection(name))

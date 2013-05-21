@@ -1,7 +1,10 @@
+if (! (Meteor.isClient && isApp))
+  return;
+
 // All Tomorrow's Parties -- client
 
-Meteor.subscribe("directory");
-Meteor.subscribe("parties");
+Offline.subscribe("directory");
+Offline.subscribe("parties");
 
 // If no party selected, select one.
 Meteor.startup(function () {
@@ -46,15 +49,15 @@ Template.details.maybeChosen = function (what) {
 
 Template.details.events({
   'click .rsvp_yes': function () {
-    Meteor.call("rsvp", Session.get("selected"), "yes");
+    Offline.call("rsvp", Session.get("selected"), "yes");
     return false;
   },
   'click .rsvp_maybe': function () {
-    Meteor.call("rsvp", Session.get("selected"), "maybe");
+    Offline.call("rsvp", Session.get("selected"), "maybe");
     return false;
   },
   'click .rsvp_no': function () {
-    Meteor.call("rsvp", Session.get("selected"), "no");
+    Offline.call("rsvp", Session.get("selected"), "no");
     return false;
   },
   'click .invite': function () {
@@ -213,13 +216,16 @@ Template.createDialog.events({
     var coords = Session.get("createCoords");
 
     if (title.length && description.length) {
-      Meteor.call('createParty', {
+      Offline.call('createParty', {
+        id: Random.id(),
         title: title,
         description: description,
         x: coords.x,
         y: coords.y,
         public: public
       }, function (error, party) {
+        if (error)
+          console.log('error!', error);
         if (! error) {
           Session.set("selected", party);
           if (! public && Meteor.users.find().count() > 1)
@@ -255,7 +261,7 @@ Template.page.showInviteDialog = function () {
 
 Template.inviteDialog.events({
   'click .invite': function (event, template) {
-    Meteor.call('invite', Session.get("selected"), this._id);
+    Offline.call('invite', Session.get("selected"), this._id);
   },
   'click .done': function (event, template) {
     Session.set("showInviteDialog", false);

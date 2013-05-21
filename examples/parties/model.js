@@ -1,3 +1,6 @@
+if (! (Meteor.isClient && isApp || Meteor.isServer))
+  return;
+
 // All Tomorrow's Parties -- data model
 // Loaded on both the client and the server
 
@@ -13,7 +16,7 @@
     invited: Array of user id's that are invited (only if !public)
     rsvps: Array of objects like {user: userId, rsvp: "yes"} (or "no"/"maybe")
 */
-Parties = new Meteor.Collection("parties");
+Parties = Offline.openCollection("parties");
 
 Parties.allow({
   insert: function (userId, party) {
@@ -42,7 +45,7 @@ attending = function (party) {
   return (_.groupBy(party.rsvps, 'rsvp').yes || []).length;
 };
 
-Meteor.methods({
+Offline.methods({
   // options should include: title, description, x, y, public
   createParty: function (options) {
     options = options || {};
@@ -60,6 +63,7 @@ Meteor.methods({
       throw new Meteor.Error(403, "You must be logged in");
 
     return Parties.insert({
+      _id: options.id,
       owner: this.userId,
       x: options.x,
       y: options.y,
