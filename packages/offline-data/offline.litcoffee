@@ -516,8 +516,6 @@ TODO sessionData: use the same sessionData as the real connection or our own?
           setUserId: (userId) => @setUserId(userId)
         })
 
-TODO fixme
-
         if alreadyInSimulation
           try
             ret = Meteor._CurrentInvocation.withValue(invocation, ->
@@ -578,7 +576,15 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
         alreadyInSimulation = enclosing and enclosing.isSimulation
 
         @_runStub(methodId, alreadyInSimulation, name, args)
-        .then(=>
+        .onFailure((exception) =>
+          unless exception.expected
+            Meteor._debug(
+              "Exception while simulating the effect of invoking '" +
+              name + "'", exception, exception.stack
+            )
+          return
+        )
+        .always(=>
           return if alreadyInSimulation
           database.transaction(thisApp, 'add queued method', =>
             database.addQueuedMethod(methodId, name, EJSON.stringify(args))
@@ -591,15 +597,6 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
 
         return
 
-TODO
-        # if exception and not exception.expected
-        #   Meteor._debug("Exception while simulating the effect of invoking '" +
-        #                 name + "'", exception, exception.stack)
-
-        # callback = (->) unless callback
-
-
-    return unless isApp
 
     @defaultOfflineConnection = new OfflineConnection(Meteor.default_connection)
 

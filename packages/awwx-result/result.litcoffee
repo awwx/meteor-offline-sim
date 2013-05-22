@@ -35,7 +35,7 @@
           throw new Error "Result.onFail: callback is not a function: #{cb}"
         @callback (failed, value) =>
           return unless failed
-          catcherr => cb(this)
+          catcherr => cb(failed, this)
           return
         this
 
@@ -108,6 +108,15 @@
           return
 
         return result
+
+
+TODO more like https://github.com/cujojs/when/blob/2.1.0/when.js#L80
+
+      always: (fn) ->
+        f = ->
+          fn()
+          return
+        return @then(f, f)
 
       @value: (v) ->
         result = new Result()
