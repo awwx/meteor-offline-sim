@@ -394,23 +394,6 @@ Make a method call.  `awwx.Offline.apply` on the server simply runs
 the method, so this has the same effect as calling `Meteor.apply(name,
 args)`, except that we *don't* invoke the stub for the method.
 
-We may successfully run the method on the server but `methodCompleted`
-might not get called if the browser tab is closed, or if we lose the
-Internet connection before we get the reply back.
-
-TODO keep track of which tab has sent a method and don't send it again
-as long as that tab is alive.
-
-TODO the server sends a DDP "methods" message to the client with the
-method ids whose writes have been reflected in previous data messages.
-Only the proxy tab is subscribed, so the "methods" message will only
-mean anything in the proxy tab.  Thus we want to make method calls
-from the proxy tab.
-
-What happens if we change proxy tabs A) while offline and some method
-calls are waiting to be sent or B) we are online and we've just sent
-the method call?
-
 Problem: Meteor will automatically retry sending method calls from a
 tab until it goes online again.  So once a method call has been queued
 up in a tab, it will eventually be sent if the app goes online.  So if
@@ -434,6 +417,17 @@ TODO can we hack livedata_connection to abort sending messages?
 TODO Also support other Livedata connections.
 Perhaps keyed by URL (e.g. "madewith.meteor.com")?
 Is the URL available from the LivedataConnection?
+
+TODO argument for which connection
+
+    broadcast.listen 'newQueuedMethod', ->
+      defaultOfflineConnection.sendQueuedMethods()
+      return
+
+    nowProxy.listen ->
+      defaultOfflineConnection.sendQueuedMethods()
+      return
+
 
     methodHandlers = {}
 
@@ -489,9 +483,13 @@ TODO only send queued methods from the proxy tab
 
       sendQueuedMethods: ->
         database.transaction(thisApp, 'send queued methods', ->
-          database.readQueuedMethods()
+          Result.join([
+            database.readProxyTab()
+            database.readQueuedMethods()
+          ])
         )
-        .then((methods) ->
+        .then(([proxyTabId, methods]) ->
+          return unless proxyTabId is thisTabId
           sent = {}
           for methodId, {name, args} of methods
             sendQueuedMethod(methodId, name, args)
@@ -586,7 +584,7 @@ https://github.com/meteor/meteor/blob/release/0.6.1/packages/livedata/livedata_c
             database.addQueuedMethod(methodId, name, EJSON.stringify(args))
           )
           .then(=>
-            Meteor.defer(=> @sendQueuedMethods())
+            broadcast 'newQueuedMethod'
             return
           )
         )
