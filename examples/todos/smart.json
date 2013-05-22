@@ -1,0 +1,9 @@
+{
+  "meteor": {
+    "git": "https://github.com/meteor/meteor.git",
+    "tag": "release/0.6.3.1"
+  },
+  "packages": {
+    "offline-data": { "path": "../../packages/offline-data" }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "packages": {
+    "awwx-err":            { "path": "../awwx-err" },
+    "awwx-setimmediate":   { "path": "../awwx-setimmediate" },
+    "sim":                 { "path": "../sim" },
+    "canonical-stringify": { "path": "../canonical-stringify" }
+  }
+}

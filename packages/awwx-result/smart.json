@@ -1,0 +1,6 @@
+{
+  "packages": {
+    "awwx-err":    { "path": "../awwx-err" },
+    "awwx-fanout": { "path": "../awwx-fanout" }
+  }
+}

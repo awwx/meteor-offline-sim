@@ -1,0 +1,9 @@
+{
+  "packages": {
+    "sim":                 { "path": "../sim" },
+    "sim-broadcast":       { "path": "../sim-broadcast" },
+    "sim-database":        { "path": "../sim-database" },
+    "proxytab":            { "path": "../proxytab" },
+    "canonical-stringify": { "path": "../canonical-stringify" }
+  }
+}

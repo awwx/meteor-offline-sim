@@ -1,0 +1,5 @@
+{
+  "packages": {
+    "awwx-err": { "path": "../awwx-err" }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "meteor": {
+    "git": "https://github.com/meteor/meteor.git",
+    "tag": "release/0.6.3.1",
+    "commit": "f87f0bd52565031d3cf99a654e9adc4662a49eb9"
+  },
+  "dependencies": {
+    "basePackages": {
+      "offline-data": {
+        "path": "../../packages/offline-data"
+      }
+    },
+    "packages": {
+      "offline-data": {
+        "path": "../../packages/offline-data"
+      },
+      "sim": {
+        "path": "../../packages/sim"
+      },
+      "sim-broadcast": {
+        "path": "../../packages/sim-broadcast"
+      },
+      "sim-database": {
+        "path": "../../packages/sim-database"
+      },
+      "proxytab": {
+        "path": "../../packages/proxytab"
+      },
+      "canonical-stringify": {
+        "path": "../../packages/canonical-stringify"
+      },
+      "awwx-fanout": {
+        "path": "../../packages/awwx-fanout"
+      },
+      "awwx-result": {
+        "path": "../../packages/awwx-result"
+      },
+      "awwx-err": {
+        "path": "../../packages/awwx-err"
+      },
+      "awwx-setimmediate": {
+        "path": "../../packages/awwx-setimmediate"
+      }
+    }
+  }
+}

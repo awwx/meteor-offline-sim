@@ -37,7 +37,7 @@ counterpart.
 
     return unless Meteor.isClient and isApp
 
-    {Result} = Sim
+    {Result} = Sim ? awwx
 
     Offline = (@Offline or= {})
 

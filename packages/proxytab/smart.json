@@ -1,0 +1,7 @@
+{
+  "packages": {
+    "awwx-err":     { "path": "../awwx-err" },
+    "sim":          { "path": "../sim" },
+    "sim-database": { "path": "../sim-database" }
+  }
+}

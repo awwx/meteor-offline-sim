@@ -1,0 +1,6 @@
+{
+  "packages": {
+    "awwx-fanout": { "path": "../awwx-fanout" },
+    "sim":         { "path": "../sim" }
+  }
+}
