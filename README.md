@@ -13,7 +13,7 @@ To run the simulator with the "todos" example:
     $ cd meteor-offline-sim
     $ git submodule update --init --recursive
     $ cd examples/todos
-    $ ./run
+    $ mrt
 
 
 ## Simulator ##
