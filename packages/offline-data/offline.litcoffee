@@ -41,7 +41,7 @@ counterpart.
 
     Offline = (@Offline or= {})
 
-    serialize = canonicalStringify
+    serialize = awwx.canonicalStringify
 
     initialized = new Result()
 
@@ -236,7 +236,7 @@ proxy tab.
     nMeteorSubscriptionsReady = 0
 
     alreadyHaveMeteorSubscription = (subscription) ->
-      !! meteorSubscriptionHandles[canonicalStringify(subscription)]
+      !! meteorSubscriptionHandles[serialize(subscription)]
 
     allMeteorSubscriptionsReady = ->
       nMeteorSubscriptionsReady is _.size(meteorSubscriptionHandles)
@@ -314,7 +314,7 @@ on the server.
               ++nMeteorSubscriptionsReady
               checkIfReadyToDeleteDocs()
               return
-            meteorSubscriptionHandles[canonicalStringify(subscription)] = handle
+            meteorSubscriptionHandles[serialize(subscription)] = handle
             return
 
         return

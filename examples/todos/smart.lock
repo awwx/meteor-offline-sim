@@ -27,7 +27,9 @@
         "path": "../../packages/proxytab"
       },
       "canonical-stringify": {
-        "path": "../../packages/canonical-stringify"
+        "git": "git://github.com/awwx/meteor-canonical-stringify.git",
+        "tag": "v1.0",
+        "commit": "5f137790bcfffb56f6a2dd18128b859edc1c4df4"
       },
       "awwx-fanout": {
         "path": "../../packages/awwx-fanout"

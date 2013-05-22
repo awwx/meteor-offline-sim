@@ -11,7 +11,6 @@ To run the simulator with the "todos" example:
 
     $ git clone git://github.com/awwx/meteor-offline-sim.git
     $ cd meteor-offline-sim
-    $ git submodule update --init --recursive
     $ cd examples/todos
     $ mrt
 

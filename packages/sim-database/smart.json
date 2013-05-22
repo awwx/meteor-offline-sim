@@ -3,6 +3,9 @@
     "awwx-err":            { "path": "../awwx-err" },
     "awwx-setimmediate":   { "path": "../awwx-setimmediate" },
     "sim":                 { "path": "../sim" },
-    "canonical-stringify": { "path": "../canonical-stringify" }
+    "canonical-stringify": {
+      "git": "git://github.com/awwx/meteor-canonical-stringify.git",
+      "tag": "v1.0"
+    }
   }
 }

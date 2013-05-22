@@ -4,6 +4,9 @@
     "sim-broadcast":       { "path": "../sim-broadcast" },
     "sim-database":        { "path": "../sim-database" },
     "proxytab":            { "path": "../proxytab" },
-    "canonical-stringify": { "path": "../canonical-stringify" }
+    "canonical-stringify": {
+      "git": "git://github.com/awwx/meteor-canonical-stringify.git",
+      "tag": "v1.0"
+    }
   }
 }

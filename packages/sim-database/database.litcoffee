@@ -155,7 +155,7 @@ Pretty-print so that it's readable in the dump.
 Serialize objects in sorted key order so that they compare equal if
 they are structurally equal.
 
-      serialize = canonicalStringify
+      serialize = awwx.canonicalStringify
 
 
 Documents are a mirror of the server collection plus local

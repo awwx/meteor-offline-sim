@@ -1,3 +1,0 @@
-[submodule "packages/canonical-stringify"]
-	path = packages/canonical-stringify
-	url = git://github.com/awwx/meteor-canonical-stringify.git
