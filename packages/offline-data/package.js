@@ -3,8 +3,8 @@ Package.describe({
 });
 
 Package.on_use(function (api) {
+  api.use('coffeescript', ['client', 'server']);
   api.use([
-    'coffeescript',
     'sim',
     'sim-broadcast',
     'sim-database',
